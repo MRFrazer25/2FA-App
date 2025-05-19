@@ -1,0 +1,6 @@
+customtkinter
+pyotp
+keyring
+Pillow
+cryptography
+pyperclip
