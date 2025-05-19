@@ -171,5 +171,5 @@ def get_all_token_data() -> list[dict]:
             if token_info.get("account_name") and token_info.get("secret_key") and token_info.get("issuer_name"):
                  all_data.append(token_info) # Append the whole dict returned by get_token_secret
             else:
-                print(f"[secure_storage] Warning: Skipping token during list retrieval due to missing critical data: {token_info}")
+                print(f"[secure_storage] Warning: Skipping token for identifier '{identifier_from_list}' during list retrieval due to missing critical data. Account: '{token_info.get('account_name')}', Issuer: '{token_info.get('issuer_name')}'")
     return all_data
