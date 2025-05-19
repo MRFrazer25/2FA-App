@@ -85,7 +85,7 @@ class TokenCard(ctk.CTkFrame):
             if self.winfo_exists():
                 self.after(1000, self.update_token)
         except Exception as e:
-            print(f"Error in TokenCard update_token for {self.account_name} ({self.token_identifier}): {e}")
+            print(f"Error in TokenCard update_token: {e}")
             traceback.print_exc()
 
     def copy_to_clipboard(self):

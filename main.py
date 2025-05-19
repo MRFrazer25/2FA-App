@@ -369,7 +369,7 @@ class TwoFactorApp(ctk.CTk):
                 else:
                     # If get_token_secret returns None, it might indicate an issue.
                     # secure_storage.py's get_token_secret already logs a warning.
-                    print(f"Warning: Token data for identifier '{identifier}' not found or invalid.") # Optional: for direct app log
+                    print("Warning: Token data not found or invalid for an identifier.") # Optional: for direct app log
             
             if displayed_tokens_count == 0: # No tokens matched search, or all failed to load
                 self.token_scrollable_frame.grid_forget() # Ensure it's hidden

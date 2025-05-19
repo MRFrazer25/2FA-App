@@ -61,7 +61,7 @@ def save_token_secret(account_name: str, issuer_name: str, secret_key: str, toke
         print("Keyring backend not found. Secure storage is unavailable.")
         raise
     except Exception as e:
-        print(f"Error saving secret for {current_identifier}: {e}")
+        print(f"Error saving secret: {e}")
         raise
 
 def get_token_secret(identifier: str) -> dict | None:
@@ -84,7 +84,7 @@ def get_token_secret(identifier: str) -> dict | None:
         print("Keyring backend not found. Secure storage is unavailable.")
         return None
     except Exception as e:
-        print(f"Error retrieving secret for {identifier}: {e}")
+        print(f"Error retrieving secret: {e}")
         return None
 
 def delete_token_secret(identifier: str):
@@ -97,7 +97,7 @@ def delete_token_secret(identifier: str):
     except keyring.errors.PasswordDeleteError:
         _remove_account_from_list(identifier) # Attempt to remove from list even if direct delete fails
     except Exception as e:
-        print(f"Error deleting secret for {identifier}: {e}")
+        print(f"Error deleting secret: {e}")
 
 def get_all_token_identifiers() -> list[str]:
     """Retrieves the list of all account identifiers stored."""
@@ -171,5 +171,5 @@ def get_all_token_data() -> list[dict]:
             if token_info.get("account_name") and token_info.get("secret_key") and token_info.get("issuer_name"):
                  all_data.append(token_info) # Append the whole dict returned by get_token_secret
             else:
-                print(f"[secure_storage] Warning: Skipping token during list retrieval due to missing critical data for identifier {identifier_from_list}: {token_info}")
+                print(f"[secure_storage] Warning: Skipping token during list retrieval due to missing critical data: {token_info}")
     return all_data

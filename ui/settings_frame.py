@@ -261,10 +261,10 @@ class SettingsFrame(ctk.CTkFrame):
                         restored_count += 1
                     except Exception as e:
                         # Consider logging specific token that failed
-                        print(f"Failed to restore token {issuer_name}/{account_name}: {e}")
+                        print(f"Failed to restore a token: {e}")
                         failed_count += 1
                 else:
-                    print(f"Skipping token due to missing critical data: {token_data}")
+                    print(f"Skipping token due to missing critical data. Token details: {{'issuer': token_data.get('issuer_name'), 'account': token_data.get('account_name')}}")
                     failed_count += 1
             
             summary_message = f"Restore completed.\n\nSuccessfully restored: {restored_count} token(s).\nFailed to restore: {failed_count} token(s)."
