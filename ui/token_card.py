@@ -93,7 +93,7 @@ class TokenCard(ctk.CTkFrame):
             try:
                 pyperclip.copy(self._current_token_val)
                 original_text = self.copy_button.cget("text")
-                self.copy_button.configure(text="OK!") # Shorter feedback
+                self.copy_button.configure(text="OK!")
                 self.copy_button.after(1500, lambda: self.copy_button.configure(text=original_text))
 
                 if self.clipboard_clear_timer and self.clipboard_clear_timer.is_alive():

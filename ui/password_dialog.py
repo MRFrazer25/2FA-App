@@ -64,9 +64,6 @@ class PasswordDialog(ctk.CTkToplevel):
         if self._show_cancel:
             self._cancel_event()
         else:
-            # If cancel is not shown, closing the window is like cancelling.
-            # Or, could be tied to a more forceful quit like in PinDialog if mandatory.
-            # For backup password, cancelling is usually fine.
             self._user_password = None
             self.grab_release()
             self.destroy()
@@ -104,7 +101,7 @@ class PasswordDialog(ctk.CTkToplevel):
             self.password_entry.focus()
             return
         
-        # Basic password strength suggestion (optional, can be enhanced)
+        # Basic password strength suggestion
         if len(pass1) < 8: # Example: minimum 8 characters
             self.error_label_text.set("Password should be at least 8 characters.")
             self.password_entry.focus()

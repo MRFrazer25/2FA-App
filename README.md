@@ -35,7 +35,7 @@ A secure and modern two-factor authentication (2FA) desktop application built wi
     cd 2FA_App
     ```
 
-2.  **Install Dependencies (Virtual Environment Recommended):
+2.  **Install Dependencies (Virtual Environment Recommended):**
     ```bash
     python -m venv venv
     # Activate the virtual environment:

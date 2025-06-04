@@ -24,7 +24,7 @@ class TwoFactorApp(ctk.CTk):
 
         self.app_unlocked = False
         self.pin_attempts = 0
-        self.last_active_frame_before_lock = None # Used to restore view before lock
+        self.last_active_frame_before_lock = None
         self.inactivity_timer_id = None
         self.auto_lock_after_seconds = secure_storage.get_auto_lock_setting()
 
@@ -206,16 +206,15 @@ class TwoFactorApp(ctk.CTk):
             if frame_class_name == "Home":
                 self.show_home_frame()
             elif frame_class_name == "Settings":
-                from ui.settings_frame import SettingsFrame # Import here for lazy loading & updated path
+                from ui.settings_frame import SettingsFrame
                 if SettingsFrame not in self.frames or self.frames[SettingsFrame] is None or not self.frames[SettingsFrame].winfo_exists():
-                    settings_frame_instance = SettingsFrame(self.content_container, app_instance=self) # Pass app_instance
+                    settings_frame_instance = SettingsFrame(self.content_container, app_instance=self)
                     self.frames[SettingsFrame] = settings_frame_instance
 
                 settings_instance = self.frames[SettingsFrame]
                 self.show_frame(settings_instance)
-            # Add other frame navigation logic here if needed
         else:
-            # This case should ideally not be hit if UI elements triggering this are disabled when locked.
+            # This case should ideally not be used if UI elements triggering this are disabled when locked.
             pass
 
     def show_frame(self, frame_instance_to_show):
@@ -432,7 +431,7 @@ if __name__ == "__main__":
         traceback.print_exc()
         error_message = f"A critical error occurred: {e}. Please check logs."
 
-        # Try to show an error message box if possible
+        # Try to show an error message box
         try:
             if app and app.winfo_exists(): # Check if app and its window exist
                  messagebox.showerror("Critical Error", error_message, parent=app)

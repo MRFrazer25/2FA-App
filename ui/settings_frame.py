@@ -290,48 +290,44 @@ class SettingsFrame(ctk.CTkFrame):
             self.change_pin_button.configure(state="normal", text="Set PIN") # Change text if no PIN, ensure it's enabled
 
     def _handle_change_pin(self):
-        if not app_lock.is_pin_set(): # Current button text is "Set PIN"
-            self._set_initial_pin() # Reuse logic for setting PIN for the first time
+        """Handle PIN change request."""
+        if not app_lock.is_pin_set():
+            # If no PIN is set, set initial PIN
+            self._set_initial_pin()
             return
 
-        # Ask for current PIN first
-        current_pin_dialog = PinDialog(self.master_app, title="Verify Current PIN", prompt="Enter your current PIN to change it:", show_cancel=True)
+        # Verify current PIN first
+        current_pin_dialog = PinDialog(self.master_app, title="Verify Current PIN", 
+                                     prompt="Enter your current PIN to change it:", show_cancel=True)
         current_pin = current_pin_dialog.get_pin()
 
         if not current_pin:
-            return # User cancelled
+            return  # User cancelled
 
         if not app_lock.verify_app_pin(current_pin):
-            messagebox.showerror("PIN Verification Failed", "The current PIN you entered is incorrect.", parent=self.master_app)
+            messagebox.showerror("PIN Verification Failed", 
+                               "The current PIN you entered is incorrect.", parent=self.master_app)
             return
 
         # Current PIN verified, ask for new PIN
         self._set_initial_pin(prompt_message="Enter your new PIN (min. 4 characters):", title="Set New PIN")
         
     def _set_initial_pin(self, prompt_message="Set a new application PIN (min 4 characters):", title="Set Application PIN"):
+        """Set or change the application PIN."""
         new_pin_dialog = PinDialog(self.master_app, title=title, 
-                                   prompt=prompt_message, 
-                                   confirm_pin_mode=True, show_cancel=True)
+                                  prompt=prompt_message, 
+                                  confirm_pin_mode=True, show_cancel=True)
         new_pin = new_pin_dialog.get_pin()
 
         if new_pin:
             try:
                 app_lock.set_app_pin(new_pin)
-                # Check if PIN is now set to provide correct message, as set_app_pin doesn't return status directly
-                if app_lock.is_pin_set():
-                    messagebox.showinfo("PIN Updated", "Application PIN has been successfully set/updated.", parent=self.master_app)
-                else:
-                    # This case should ideally not happen if set_app_pin was successful and didn't raise error
-                    messagebox.showerror("PIN Error", "Failed to set PIN. Please try again.", parent=self.master_app)
+                messagebox.showinfo("PIN Updated", "Application PIN has been successfully set/updated.", parent=self.master_app)
             except ValueError as ve:
                 messagebox.showerror("PIN Error", str(ve), parent=self.master_app)
             except Exception as e:
                 messagebox.showerror("PIN Error", f"Could not set new PIN: {e}", parent=self.master_app)
             finally:
                 self.update_pin_button_states()
-        else: # User cancelled setting new PIN
-            self.update_pin_button_states() # Ensure buttons are in correct state if user cancels new PIN dialog
-
-    def _show_backup_password_dialog(self, title, prompt, confirm_prompt=None, show_cancel=True):
-        # This method is not used in the current implementation
-        pass
+        else:
+            self.update_pin_button_states()  # Ensure buttons are in correct state if user cancels
