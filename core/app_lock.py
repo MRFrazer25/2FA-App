@@ -1,70 +1,159 @@
+"""Unlocking the app.
+
+Token secrets are encrypted with a random data key. The data key is stored in the
+keyring encrypted ("wrapped") with a key derived from the user's PIN or password,
+so the secrets can only be read after the correct PIN or password is entered.
+Changing the PIN or password only re-wraps the data key.
+"""
+import base64
 import hashlib
+import hmac
+import json
 import keyring
 import os
+from cryptography.exceptions import InvalidTag
+from cryptography.hazmat.primitives.ciphers.aead import AESGCM
+from cryptography.hazmat.primitives.kdf.scrypt import Scrypt
 
 SERVICE_NAME = "Python2FAApp_Lock"
-PIN_HASH_KEY = "app_pin_hash"
-SALT_KEY = "app_pin_salt"
-PBKDF2_ITERATIONS = 100000
+VAULT_KEY = "vault_key"
 
-# PIN Hashing and Verification 
+KIND_PIN = "pin"
+KIND_PASSWORD = "password"
+MIN_PIN_LENGTH = 6
+MIN_PASSWORD_LENGTH = 8
 
-def _generate_salt():
-    """Generates a new random salt."""
-    return os.urandom(16)
+# OWASP recommended scrypt parameters (about 1 second and 128 MiB per attempt)
+SCRYPT_N = 2 ** 17
+SCRYPT_R = 8
+SCRYPT_P = 1
+DATA_KEY_SIZE_BYTES = 32 # AES-256
+NONCE_SIZE_BYTES = 12
+WRAP_ASSOCIATED_DATA = b"2FA App data key"
 
-def _hash_pin(pin: str, salt: bytes) -> bytes:
-    """Hashes the PIN using PBKDF2-SHA256."""
-    return hashlib.pbkdf2_hmac('sha256', pin.encode('utf-8'), salt, PBKDF2_ITERATIONS)
+# Before encryption was added, only a hash of the PIN was stored
+LEGACY_PIN_HASH_KEY = "app_pin_hash"
+LEGACY_SALT_KEY = "app_pin_salt"
+LEGACY_PBKDF2_ITERATIONS = 100000
+LEGACY_PIN_RECORD_PREFIX = "pbkdf2_sha256"
 
-def set_app_pin(pin: str):
-    """Hashes and stores the application PIN and its salt securely."""
-    if len(pin) < 4:
-        raise ValueError("PIN must be at least 4 digits long.")
+def describe(kind: str) -> str:
+    return "PIN" if kind == KIND_PIN else "password"
+
+def validate_passcode(kind: str, passcode: str):
+    """Raises ValueError if the PIN or password doesn't meet the requirements."""
+    if kind == KIND_PIN:
+        if not passcode.isdigit():
+            raise ValueError("PIN must contain digits only.")
+        if len(passcode) < MIN_PIN_LENGTH:
+            raise ValueError(f"PIN must be at least {MIN_PIN_LENGTH} digits.")
+    elif kind == KIND_PASSWORD:
+        if len(passcode) < MIN_PASSWORD_LENGTH:
+            raise ValueError(f"Password must be at least {MIN_PASSWORD_LENGTH} characters.")
+    else:
+        raise ValueError("Unknown passcode type.")
+
+def _b64(data: bytes) -> str:
+    return base64.b64encode(data).decode("ascii")
+
+def _derive_wrapping_key(passcode: str, salt: bytes, n: int, r: int, p: int) -> bytes:
+    return Scrypt(salt=salt, length=DATA_KEY_SIZE_BYTES, n=n, r=r, p=p).derive(passcode.encode("utf-8"))
+
+def _load_vault_record() -> dict | None:
+    stored = keyring.get_password(SERVICE_NAME, VAULT_KEY)
+    return json.loads(stored) if stored else None
+
+def has_vault() -> bool:
+    """Checks if a PIN or password has been set up. Keyring errors are raised so a failed
+    read is never treated as "not set up"."""
+    return _load_vault_record() is not None
+
+def passcode_kind() -> str:
+    """Returns KIND_PIN or KIND_PASSWORD for the current vault."""
+    record = _load_vault_record()
+    return record.get("kind", KIND_PASSWORD) if record else KIND_PASSWORD
+
+def set_passcode(data_key: bytes, kind: str, passcode: str):
+    """Stores the data key wrapped with a key derived from the given PIN or password,
+    replacing any previous one, and removes any legacy PIN hash."""
+    validate_passcode(kind, passcode)
+    salt = os.urandom(16)
+    nonce = os.urandom(NONCE_SIZE_BYTES)
+    wrapping_key = _derive_wrapping_key(passcode, salt, SCRYPT_N, SCRYPT_R, SCRYPT_P)
+    record = {
+        "version": 1,
+        "kind": kind,
+        "kdf": "scrypt",
+        "n": SCRYPT_N,
+        "r": SCRYPT_R,
+        "p": SCRYPT_P,
+        "salt": _b64(salt),
+        "nonce": _b64(nonce),
+        "wrapped_key": _b64(AESGCM(wrapping_key).encrypt(nonce, data_key, WRAP_ASSOCIATED_DATA)),
+    }
+    keyring.set_password(SERVICE_NAME, VAULT_KEY, json.dumps(record))
+    _delete_legacy_pin()
+
+def create_vault(kind: str, passcode: str) -> bytes:
+    """Creates a new random data key protected by the given PIN or password and returns it."""
+    data_key = AESGCM.generate_key(bit_length=DATA_KEY_SIZE_BYTES * 8)
+    set_passcode(data_key, kind, passcode)
+    return data_key
+
+def unlock(passcode: str) -> bytes | None:
+    """Returns the data key if the PIN or password is correct, otherwise None.
+    Keyring errors are raised."""
+    record = _load_vault_record()
+    if record is None:
+        return None
+    wrapping_key = _derive_wrapping_key(passcode, base64.b64decode(record["salt"]),
+                                        record["n"], record["r"], record["p"])
     try:
-        salt = _generate_salt()
-        hashed_pin = _hash_pin(pin, salt)
-        
-        keyring.set_password(SERVICE_NAME, SALT_KEY, salt.hex()) # Store salt as hex
-        keyring.set_password(SERVICE_NAME, PIN_HASH_KEY, hashed_pin.hex()) # Store hash as hex
-    except keyring.errors.NoKeyringError:
-        print("Keyring backend not found. Cannot set application PIN.")
-        raise
-    except Exception as e:
-        print(f"Error setting PIN: {e}")
-        raise
+        return AESGCM(wrapping_key).decrypt(base64.b64decode(record["nonce"]),
+                                            base64.b64decode(record["wrapped_key"]),
+                                            WRAP_ASSOCIATED_DATA)
+    except InvalidTag:
+        return None
 
-def verify_app_pin(pin: str) -> bool:
-    """Verifies the provided PIN against the stored hash."""
-    try:
-        salt_hex = keyring.get_password(SERVICE_NAME, SALT_KEY)
-        stored_hash_hex = keyring.get_password(SERVICE_NAME, PIN_HASH_KEY)
+# Legacy PIN (hash only, from before encryption was added)
 
-        if not salt_hex or not stored_hash_hex:
-            return False # PIN not set
+def _load_legacy_pin_record() -> tuple[int, bytes, bytes] | None:
+    """Returns (iterations, salt, hash) for a legacy PIN, or None if there isn't one."""
+    stored = keyring.get_password(SERVICE_NAME, LEGACY_PIN_HASH_KEY)
+    if not stored:
+        return None
+    if stored.startswith(LEGACY_PIN_RECORD_PREFIX + "$"):
+        _, iterations, salt_hex, hash_hex = stored.split("$")
+        return int(iterations), bytes.fromhex(salt_hex), bytes.fromhex(hash_hex)
+    salt_hex = keyring.get_password(SERVICE_NAME, LEGACY_SALT_KEY)
+    if not salt_hex:
+        return None
+    return LEGACY_PBKDF2_ITERATIONS, bytes.fromhex(salt_hex), bytes.fromhex(stored)
 
-        salt = bytes.fromhex(salt_hex)
-        stored_hash = bytes.fromhex(stored_hash_hex)
-        
-        hashed_attempt = _hash_pin(pin, salt)
-        
-        # Use direct equality for fixed-length hash comparison
-        return hashed_attempt == stored_hash
-    except keyring.errors.NoKeyringError:
-        print("Keyring backend not found. Cannot verify PIN.")
-        return False # Or raise an error to indicate a critical issue
-    except Exception as e:
-        print(f"Error verifying PIN: {e}")
+def has_legacy_pin() -> bool:
+    return _load_legacy_pin_record() is not None
+
+def verify_legacy_pin(pin: str) -> bool:
+    record = _load_legacy_pin_record()
+    if record is None:
         return False
+    iterations, salt, stored_hash = record
+    attempt = hashlib.pbkdf2_hmac("sha256", pin.encode("utf-8"), salt, iterations)
+    return hmac.compare_digest(attempt, stored_hash)
 
-def is_pin_set() -> bool:
-    """Checks if an application PIN has been set."""
-    try:
-        salt = keyring.get_password(SERVICE_NAME, SALT_KEY)
-        pin_hash = keyring.get_password(SERVICE_NAME, PIN_HASH_KEY)
-        return salt is not None and pin_hash is not None
-    except keyring.errors.NoKeyringError:
-        return False # If keyring is unavailable, or can't determine if PIN is set
-    except Exception as e:
-        print(f"Error checking if PIN is set: {e}")
-        return False
+def legacy_pin_kind(pin: str) -> str | None:
+    """Returns the kind a legacy PIN can be kept as under the current rules, or None if it's too weak."""
+    for kind in (KIND_PIN, KIND_PASSWORD):
+        try:
+            validate_passcode(kind, pin)
+            return kind
+        except ValueError:
+            pass
+    return None
+
+def _delete_legacy_pin():
+    for key in (LEGACY_PIN_HASH_KEY, LEGACY_SALT_KEY):
+        try:
+            keyring.delete_password(SERVICE_NAME, key)
+        except keyring.errors.PasswordDeleteError:
+            pass

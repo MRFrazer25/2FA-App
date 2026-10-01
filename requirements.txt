@@ -4,3 +4,4 @@ keyring
 Pillow
 cryptography
 pyperclip
+opencv-python

@@ -21,7 +21,7 @@ class RecoveryCodesDialog(ctk.CTkToplevel):
         container_frame.grid_rowconfigure(1, weight=1) # For textbox
         container_frame.grid_rowconfigure(2, weight=0) # For button
 
-        info_label = ctk.CTkLabel(container_frame, text="You can select and copy the codes below (Ctrl+C or right-click).")
+        info_label = ctk.CTkLabel(container_frame, text="You can select and copy the codes below (Ctrl+C).")
         info_label.grid(row=0, column=0, padx=10, pady=(0,10), sticky="w")
 
         self.codes_textbox = ctk.CTkTextbox(container_frame, wrap="word", height=150, width=350, font=ctk.CTkFont(size=14))
@@ -50,7 +50,7 @@ class RecoveryCodesDialog(ctk.CTkToplevel):
             self.geometry(f"+{x}+{y}")
         else:
             # Fallback if master isn't available or valid, though it should be.
-            self.eval(f'tk::PlaceWindow {str(self)} center')
+            self.tk.eval(f'tk::PlaceWindow {self} center')
 
     def show(self):
         self.master.wait_window(self) 

@@ -1,11 +1,12 @@
 import customtkinter as ctk
 
 class PasswordDialog(ctk.CTkToplevel):
-    """Modal dialog for entering and confirming a password, typically for backup encryption."""
+    """Modal dialog for entering a backup password.
+    With confirm=True (setting a new password), the password must be entered twice and be at least 8 characters."""
     def __init__(self, master, title="Set Backup Password", 
                  prompt="Please enter a password for your backup:",
                  confirm_prompt="Confirm Password:",
-                 show_cancel=True):
+                 confirm=True):
         super().__init__(master)
         self.lift()
         self.attributes("-topmost", True)
@@ -14,7 +15,7 @@ class PasswordDialog(ctk.CTkToplevel):
         self.title(title)
 
         self._user_password = None
-        self._show_cancel = show_cancel
+        self._confirm = confirm
 
         # Widgets
         self.prompt_label = ctk.CTkLabel(self, text=prompt, wraplength=300, justify="center")
@@ -23,11 +24,12 @@ class PasswordDialog(ctk.CTkToplevel):
         self.password_entry = ctk.CTkEntry(self, placeholder_text="Enter Password", show="*", width=250, font=ctk.CTkFont(size=14))
         self.password_entry.pack(padx=20, pady=5)
 
-        self.confirm_prompt_label = ctk.CTkLabel(self, text=confirm_prompt, wraplength=300, justify="center")
-        self.confirm_prompt_label.pack(padx=20, pady=(10,0))
-        
-        self.confirm_password_entry = ctk.CTkEntry(self, placeholder_text="Confirm Password", show="*", width=250, font=ctk.CTkFont(size=14))
-        self.confirm_password_entry.pack(padx=20, pady=(5,10))
+        if self._confirm:
+            self.confirm_prompt_label = ctk.CTkLabel(self, text=confirm_prompt, wraplength=300, justify="center")
+            self.confirm_prompt_label.pack(padx=20, pady=(10,0))
+
+            self.confirm_password_entry = ctk.CTkEntry(self, placeholder_text="Confirm Password", show="*", width=250, font=ctk.CTkFont(size=14))
+            self.confirm_password_entry.pack(padx=20, pady=(5,10))
 
         self.error_label_text = ctk.StringVar()
         self.error_label = ctk.CTkLabel(self, textvariable=self.error_label_text, text_color="red")
@@ -37,36 +39,20 @@ class PasswordDialog(ctk.CTkToplevel):
         self.buttons_frame = ctk.CTkFrame(self, fg_color="transparent")
         self.buttons_frame.pack(padx=20, pady=(10, 20), fill="x")
 
-        if self._show_cancel:
-            self.buttons_frame.grid_columnconfigure(0, weight=1)
-            self.buttons_frame.grid_columnconfigure(1, weight=1)
-            self.cancel_button = ctk.CTkButton(self.buttons_frame, text="Cancel", command=self._cancel_event, width=100, fg_color="gray", hover_color="darkgray")
-            self.cancel_button.grid(row=0, column=0, padx=(0, 5), sticky="ew")
-            self.ok_button = ctk.CTkButton(self.buttons_frame, text="OK", command=self._ok_event, width=100)
-            self.ok_button.grid(row=0, column=1, padx=(5, 0), sticky="ew")
-        else: # Should ideally always have a cancel for password setting unless it's a forced change
-            self.buttons_frame.grid_columnconfigure(0, weight=1)
-            self.ok_button = ctk.CTkButton(self.buttons_frame, text="OK", command=self._ok_event, width=100)
-            self.ok_button.grid(row=0, column=0, sticky="ew")
-            self.cancel_button = None # Explicitly set to None if not created
+        self.buttons_frame.grid_columnconfigure(0, weight=1)
+        self.buttons_frame.grid_columnconfigure(1, weight=1)
+        self.cancel_button = ctk.CTkButton(self.buttons_frame, text="Cancel", command=self._cancel_event, width=100, fg_color="gray", hover_color="darkgray")
+        self.cancel_button.grid(row=0, column=0, padx=(0, 5), sticky="ew")
+        self.ok_button = ctk.CTkButton(self.buttons_frame, text="OK", command=self._ok_event, width=100)
+        self.ok_button.grid(row=0, column=1, padx=(5, 0), sticky="ew")
 
         self.password_entry.after(100, self.password_entry.focus_force)
-        # Bind Return key to OK event
+        # Bind Return key to OK event (applies to the entry fields too)
         self.bind("<Return>", self._ok_event)
-        self.password_entry.bind("<Return>", self._ok_event)
-        self.confirm_password_entry.bind("<Return>", self._ok_event)
 
-        self.protocol("WM_DELETE_WINDOW", self._handle_close_button)
+        self.protocol("WM_DELETE_WINDOW", self._cancel_event)
         self.after(50, self._center_window)
         self.after(150, lambda: self.attributes("-topmost", False))
-
-    def _handle_close_button(self):
-        if self._show_cancel:
-            self._cancel_event()
-        else:
-            self._user_password = None
-            self.grab_release()
-            self.destroy()
 
     def _center_window(self):
         self.update_idletasks()
@@ -90,33 +76,34 @@ class PasswordDialog(ctk.CTkToplevel):
             y = max(0,y)
             self.geometry(f"+{x}+{y}")
         else:
-            self.eval(f'tk::PlaceWindow {str(self)} center')
+            self.tk.eval(f'tk::PlaceWindow {self} center')
 
     def _ok_event(self, event=None):
         pass1 = self.password_entry.get()
-        pass2 = self.confirm_password_entry.get()
 
         if not pass1:
             self.error_label_text.set("Password cannot be empty.")
             self.password_entry.focus()
             return
-        
-        # Basic password strength suggestion
-        if len(pass1) < 8: # Example: minimum 8 characters
-            self.error_label_text.set("Password should be at least 8 characters.")
-            self.password_entry.focus()
-            return
 
-        if not pass2:
-            self.error_label_text.set("Please confirm your password.")
-            self.confirm_password_entry.focus()
-            return
-        
-        if pass1 != pass2:
-            self.error_label_text.set("Passwords do not match.")
-            self.confirm_password_entry.focus()
-            self.confirm_password_entry.delete(0, ctk.END)
-            return
+        if self._confirm:
+            # Basic password strength requirement for new passwords
+            if len(pass1) < 8:
+                self.error_label_text.set("Password should be at least 8 characters.")
+                self.password_entry.focus()
+                return
+
+            pass2 = self.confirm_password_entry.get()
+            if not pass2:
+                self.error_label_text.set("Please confirm your password.")
+                self.confirm_password_entry.focus()
+                return
+
+            if pass1 != pass2:
+                self.error_label_text.set("Passwords do not match.")
+                self.confirm_password_entry.focus()
+                self.confirm_password_entry.delete(0, ctk.END)
+                return
         
         self._user_password = pass1
         self.grab_release()
