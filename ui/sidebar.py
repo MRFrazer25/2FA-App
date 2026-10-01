@@ -58,9 +58,14 @@ class SidebarFrame(ctk.CTkFrame):
         self.appearance_mode_optionemenu.set("System")
 
     def _load_icon(self, path, size=(20,20)):
-        """Loads an icon, returning a CTkImage or None if path is invalid."""
+        """Loads an icon recolored white to match the button text (the icon files are the
+        same blue as the buttons), or a transparent placeholder if it can't be loaded."""
         try:
-            return ctk.CTkImage(Image.open(path), size=size)
+            with Image.open(path) as image:
+                shape = image.convert("RGBA").getchannel("A")
+            icon = Image.new("RGBA", shape.size, (255, 255, 255, 255))
+            icon.putalpha(shape)
+            return ctk.CTkImage(icon, size=size)
         except FileNotFoundError:
             print(f"Warning: Icon not found at {path}. A placeholder will be used.")
             placeholder = Image.new('RGBA', size, (0,0,0,0)) # Transparent placeholder

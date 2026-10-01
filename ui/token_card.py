@@ -70,7 +70,8 @@ class TokenCard(ctk.CTkFrame):
         self.info_frame.grid(row=0, column=0, sticky="ew", padx=(15,5), pady=(10,0))
         self.info_frame.grid_columnconfigure(0, weight=1)
 
-        self.issuer_label = ctk.CTkLabel(self.info_frame, text=f"{self.issuer_name}", font=ctk.CTkFont(size=12, slant="italic"))
+        # padx leaves room for the slant of the last italic letter, which Tk otherwise clips
+        self.issuer_label = ctk.CTkLabel(self.info_frame, text=f"{self.issuer_name}", font=ctk.CTkFont(size=12, slant="italic"), padx=2)
         self.issuer_label.grid(row=0, column=0, sticky="w")
         self.account_name_label = ctk.CTkLabel(self.info_frame, text=f"{self.account_name}", font=ctk.CTkFont(size=16, weight="bold"))
         self.account_name_label.grid(row=1, column=0, sticky="w")
