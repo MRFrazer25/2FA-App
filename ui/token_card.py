@@ -150,12 +150,7 @@ class TokenCard(ctk.CTkFrame):
             self.delete_callback(self.token_identifier, f"{self.issuer_name} ({self.account_name})")
 
     def _show_recovery_codes(self):
-        if self.recovery_codes:
-            title = f"Recovery Codes for {self.issuer_name} ({self.account_name})"
-            dialog = RecoveryCodesDialog(self.master, title=title, recovery_codes=self.recovery_codes)
-            dialog.show() # This will make it modal and wait
-        else:
-            # This case should ideally be prevented by the button being disabled,
-            # but as a fallback:
-            from tkinter import messagebox # Import only if needed for this specific fallback
-            messagebox.showinfo("No Recovery Codes", "No recovery codes are stored for this token.", parent=self.master)
+        # Only reachable when there are codes; the button is disabled otherwise
+        title = f"Recovery Codes for {self.issuer_name} ({self.account_name})"
+        dialog = RecoveryCodesDialog(self.master, title=title, recovery_codes=self.recovery_codes)
+        dialog.show() # This will make it modal and wait

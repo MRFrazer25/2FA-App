@@ -272,3 +272,12 @@ def test_dialogs_center_on_screen_when_main_window_is_hidden(no_message_boxes):
             dialog.destroy()
     finally:
         root.destroy()
+
+def test_switching_between_home_and_settings(app):
+    from ui.settings_frame import SettingsFrame
+    app._show_frame_callback("Settings")
+    settings = app.frames[SettingsFrame]
+    assert settings.winfo_manager() == "grid" and not app.home_frame_container.winfo_manager()
+    app._show_frame_callback("Home")
+    assert not settings.winfo_manager() and app.home_frame_container.winfo_manager() == "grid"
+    assert len(app.token_cards) == 2

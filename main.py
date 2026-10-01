@@ -25,7 +25,6 @@ class TwoFactorApp(ctk.CTk):
         self.withdraw()
 
         self.app_unlocked = False
-        self.last_active_frame_before_lock = None
         self.inactivity_timer_id = None
         self.auto_lock_after_seconds = secure_storage.get_auto_lock_setting()
 
@@ -49,7 +48,7 @@ class TwoFactorApp(ctk.CTk):
         self.content_container.grid_rowconfigure(0, weight=1)
         self.content_container.grid_columnconfigure(0, weight=1)
 
-        # Frame dictionary
+        # Frames shown in the content area (other than home), by class
         self.frames = {}
 
         # Home Frame container
@@ -76,16 +75,10 @@ class TwoFactorApp(ctk.CTk):
                                              text_color="gray")
         # Grid for no_tokens_label will be managed by load_and_display_tokens
 
-        self.frames[SidebarFrame] = self.sidebar_frame
-
         if not self._handle_initial_pin_check():
             return
 
-        if self.app_unlocked:
-            self.after(100, self.show_app_window)
-        else:
-            if not self.winfo_viewable(): # Check if it was withdrawn
-                self.withdraw()
+        self.after(100, self.show_app_window)
 
         self.title("2FA App")
         self.geometry("1024x768")
@@ -121,7 +114,7 @@ class TwoFactorApp(ctk.CTk):
 
     def quit_application_if_pin_cancelled(self):
         messagebox.showerror("Unlock Required", "Application access denied. Exiting.", parent=self if self.winfo_exists() else None)
-        if hasattr(self, 'destroy') and self.winfo_exists():
+        if self.winfo_exists():
             self.destroy()
         sys.exit(1)
 
@@ -200,12 +193,12 @@ class TwoFactorApp(ctk.CTk):
             return self._set_up_passcode()
         except keyring.errors.NoKeyringError:
             messagebox.showerror("Keyring Error", "A keyring backend is required for secure storage. Please ensure one is installed and configured for your system. See README for details.", parent=self if self.winfo_exists() else None)
-            if hasattr(self, 'destroy') and self.winfo_exists(): self.destroy()
+            if self.winfo_exists(): self.destroy()
             sys.exit(1) # Critical error, cannot proceed
         except Exception as e:
             traceback.print_exc()
             messagebox.showerror("Startup Error", f"An unexpected error occurred while unlocking: {e}. Exiting.", parent=self if self.winfo_exists() else None)
-            if hasattr(self, 'destroy') and self.winfo_exists(): self.destroy()
+            if self.winfo_exists(): self.destroy()
             sys.exit(1) # Critical error, cannot proceed
 
     def _show_frame_callback(self, frame_class_name: str):
@@ -221,9 +214,6 @@ class TwoFactorApp(ctk.CTk):
 
                 settings_instance = self.frames[SettingsFrame]
                 self.show_frame(settings_instance)
-        else:
-            # This case should ideally not be used if UI elements triggering this are disabled when locked.
-            pass
 
     def show_frame(self, frame_instance_to_show):
         if frame_instance_to_show is None:
@@ -245,11 +235,9 @@ class TwoFactorApp(ctk.CTk):
     def show_home_frame(self):
         """Shows the home frame (token display area) and loads tokens."""
         # Hide all other frames in content_container before showing home_frame_container
-        for frame_key, frame_instance in self.frames.items():
-            if frame_key != SidebarFrame: # Don't hide sidebar
-                 if hasattr(frame_instance, 'master') and frame_instance.master == self.content_container: # Ensure we only hide frames within the content_container
-                    if frame_instance.winfo_ismapped():
-                         frame_instance.grid_forget()
+        for frame_instance in self.frames.values():
+            if frame_instance.winfo_ismapped():
+                frame_instance.grid_forget()
 
         self.home_frame_container.grid(row=0, column=0, sticky="nsew")
         self.home_frame_container.tkraise()
@@ -278,8 +266,6 @@ class TwoFactorApp(ctk.CTk):
                 except Exception as e:
                     traceback.print_exc()
                     messagebox.showerror("Update Error", f"An unexpected error occurred while updating the token: {e}", parent=self)
-            else:
-                pass # Dialog was cancelled
             return
 
         # Adding a new token (this part is only reached if not editing)
@@ -298,8 +284,6 @@ class TwoFactorApp(ctk.CTk):
             except Exception as e:
                 traceback.print_exc()
                 messagebox.showerror("Save Error", f"An unexpected error occurred while saving the token: {e}", parent=self)
-        else:
-            pass # Dialog was cancelled
     
     def handle_delete_token(self, token_identifier: str, display_name: str):
         confirm = messagebox.askyesno("Confirm Delete", 
@@ -313,8 +297,6 @@ class TwoFactorApp(ctk.CTk):
             except Exception as e:
                 messagebox.showerror("Delete Error", f"Could not delete token: {e}", parent=self)
                 traceback.print_exc()
-        else:
-            pass # Deletion cancelled
 
     def _destroy_token_cards(self):
         for card in self.token_cards.values():
@@ -436,12 +418,9 @@ if __name__ == "__main__":
     app = None # Initialize app to None
     try:
         app = TwoFactorApp()
-        # Only run mainloop if app was successfully initialized and unlocked
-        if hasattr(app, 'app_unlocked') and app.app_unlocked and hasattr(app, 'mainloop'):
+        # Cancelling or failing to unlock exits during startup, so this is only False if that changes
+        if app.app_unlocked:
             app.mainloop()
-        # If app.app_unlocked is False here, it means unlocking was cancelled or failed during startup,
-        # and the app should have exited via sys.exit in _handle_initial_pin_check.
-        # No explicit else needed here if sys.exit is reliably called.
     except Exception as e:
         # General exception catch for unforeseen issues during app init or mainloop
         traceback.print_exc()
@@ -457,7 +436,7 @@ if __name__ == "__main__":
             print(f"Failed to show error messagebox: {msg_e}", file=sys.stderr)
 
         # Attempt to clean up the app window if it exists
-        if app and hasattr(app, 'destroy') and app.winfo_exists():
+        if app and app.winfo_exists():
             try:
                 app.destroy()
             except Exception as destroy_e:

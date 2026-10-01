@@ -9,12 +9,10 @@ import traceback
 
 class SettingsFrame(ctk.CTkFrame):
     """Frame for managing application settings, including PIN/password, auto-lock, and backup/restore."""
-    def __init__(self, master, app_instance=None, **kwargs):
-        # app_instance is a SettingsFrame-specific parameter to access the main application.
-        # It must not be passed to the CTkFrame base class, which was causing an error.
-        # The call to super().__init__(master) below ensures app_instance is handled by SettingsFrame only.
-        super().__init__(master) # Pass only master, assuming no other CTkFrame args are needed from SettingsFrame's **kwargs
-        self.master_app = app_instance if app_instance is not None else self.winfo_toplevel()
+    def __init__(self, master, app_instance):
+        # app_instance is the main application window, used for dialogs and to refresh the token list
+        super().__init__(master)
+        self.master_app = app_instance
 
         self.grid_columnconfigure(0, weight=0) # Column for labels
         self.grid_columnconfigure(1, weight=1) # Column for buttons/options
@@ -76,8 +74,7 @@ class SettingsFrame(ctk.CTkFrame):
         messagebox.showinfo("Auto-Lock Updated", f"Auto-lock timeout set to {selected_display_value}.", parent=self.master_app)
 
         # Notify the main app to update its timer
-        if hasattr(self.master_app, 'update_auto_lock_and_reset_timer'):
-            self.master_app.update_auto_lock_and_reset_timer()
+        self.master_app.update_auto_lock_and_reset_timer()
 
     def _handle_backup_tokens(self):
         backup_file_path = ctk.filedialog.asksaveasfilename(
@@ -161,8 +158,7 @@ class SettingsFrame(ctk.CTkFrame):
                                f"\nFailed to restore: {failed_count} token(s).")
             messagebox.showinfo("Restore Summary", summary_message, parent=self.master_app)
 
-            if hasattr(self.master_app, 'load_and_display_tokens'):
-                self.master_app.load_and_display_tokens()
+            self.master_app.load_and_display_tokens()
 
         except backup.BackupPasswordError as e:
             messagebox.showerror("Decryption Failed", str(e), parent=self.master_app)
