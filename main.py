@@ -88,7 +88,6 @@ class TwoFactorApp(ctk.CTk):
 
         # Ensure these are NOT reset to None after creation
         self.token_cards = {} # Holds active TokenCard widgets
-        self.current_display_frame = None # Tracks the currently displayed frame in content_container
 
         self.protocol("WM_DELETE_WINDOW", self._on_closing)
 
@@ -216,31 +215,17 @@ class TwoFactorApp(ctk.CTk):
                 self.show_frame(settings_instance)
 
     def show_frame(self, frame_instance_to_show):
-        if frame_instance_to_show is None:
-            return
-        
-        # Hide the currently displayed frame if it's different from the home_frame_container and not the target
-        if self.current_display_frame is not None and self.current_display_frame != self.home_frame_container:
-            if self.current_display_frame.winfo_ismapped():
-                self.current_display_frame.grid_forget()
-        
-        # Also, specifically hide home_frame_container if we are showing a different frame
-        if frame_instance_to_show != self.home_frame_container:
-            if self.home_frame_container.winfo_ismapped():
-                self.home_frame_container.grid_forget()
-
-        self.current_display_frame = frame_instance_to_show # Assign the instance
-        self.current_display_frame.grid(row=0, column=0, sticky="nsew")
+        """Shows a frame in the content area and hides the others.
+        Frames are hidden whether or not they're currently drawn, since right after
+        unlocking the window isn't drawn yet and a visible-only check would miss them."""
+        for frame in (self.home_frame_container, *self.frames.values()):
+            if frame is not frame_instance_to_show:
+                frame.grid_forget()
+        frame_instance_to_show.grid(row=0, column=0, sticky="nsew")
 
     def show_home_frame(self):
         """Shows the home frame (token display area) and loads tokens."""
-        # Hide all other frames in content_container before showing home_frame_container
-        for frame_instance in self.frames.values():
-            if frame_instance.winfo_ismapped():
-                frame_instance.grid_forget()
-
-        self.home_frame_container.grid(row=0, column=0, sticky="nsew")
-        self.home_frame_container.tkraise()
+        self.show_frame(self.home_frame_container)
         self.load_and_display_tokens() # Call to load tokens
 
     def open_add_token_dialog(self, token_identifier_to_edit: str = None):

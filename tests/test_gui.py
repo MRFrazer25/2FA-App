@@ -281,3 +281,12 @@ def test_switching_between_home_and_settings(app):
     app._show_frame_callback("Home")
     assert not settings.winfo_manager() and app.home_frame_container.winfo_manager() == "grid"
     assert len(app.token_cards) == 2
+
+def test_unlocking_from_settings_hides_settings(app, monkeypatch):
+    """After unlocking, the window isn't drawn yet; Settings must still be hidden behind Home."""
+    from ui.settings_frame import SettingsFrame
+    app._show_frame_callback("Settings")
+    stub_dialog(monkeypatch, UnlockDialog, stub_unlock_with("correct horse"))
+    app.lock_application()
+    assert not app.frames[SettingsFrame].winfo_manager()
+    assert app.home_frame_container.winfo_manager() == "grid"
