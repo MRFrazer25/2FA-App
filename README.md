@@ -46,8 +46,8 @@ Your tokens can't be decrypted without it, and there is no recovery option. Keep
 
 1.  **Clone Repository:**
     ```bash
-    git clone https://github.com/MRFrazer25/2FA_App.git
-    cd 2FA_App
+    git clone https://github.com/MRFrazer25/2FA-App.git
+    cd 2FA-App
     ```
 
 2.  **Install Dependencies (Virtual Environment Recommended):**
