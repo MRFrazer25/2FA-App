@@ -17,15 +17,16 @@ A secure and modern two-factor authentication (2FA) desktop application built wi
 
 ## Security
 
-*   **Token Encryption:** Each token is encrypted with AES-256-GCM using a random data key. The data key is itself encrypted with a key derived from your PIN or password using scrypt (N=2^17, r=8, p=1, the OWASP recommendation), so tokens can't be read without it. Changing your PIN or password re-encrypts only the data key.
+*   **Token Encryption:** Each token is encrypted with AES-256-GCM using a random data key. The data key is itself encrypted with a key derived from your PIN or password using scrypt (N=2^17, r=8, p=1, the OWASP recommendation), so tokens can't be read without it. Changing your PIN or password also moves every token to a new data key, so an old copy of your data plus your old PIN or password can't read them.
 *   **System Keyring:** The encrypted tokens and encrypted data key are stored in your OS's credential manager. Keyring entries use random IDs, so they don't reveal which services you use.
 *   **Backup Encryption:** Backups are encrypted using AES-256-GCM with a key derived from a separate backup password using PBKDF2-SHA256 with 600,000 iterations (`cryptography` library). Backups made by older versions can still be restored.
+*   **Wrong-Attempt Lockout:** After 3 wrong PIN or password attempts in a row, the app makes you wait 30 seconds, doubling with each further wrong attempt up to 15 minutes. The count is kept in the keyring, so restarting the app doesn't reset it.
 *   **Auto-Lock:** Locking hides the main window, closes any open dialogs, and discards the decryption key and decrypted tokens until you unlock it again. (Python can't guarantee discarded data is wiped from memory immediately.)
 *   **Clipboard Timeout:** Auto-clears copied codes. Note that Windows clipboard history (Win+V), if enabled, keeps its own copy.
 
 ### Choosing a PIN or password
 
-Anyone who copies your encrypted data can try to guess your PIN or password on their own computer, where the app's 3-attempt limit doesn't apply. A 6-digit PIN has only a million possibilities, which a typical PC can try in about a day; a good password would take far longer. Use a password if you can.
+Anyone who copies your encrypted data can try to guess your PIN or password on their own computer, where the app's lockout doesn't apply. A 6-digit PIN has only a million possibilities, which a typical PC can try in about a day; a good password would take far longer. Use a password if you can.
 
 ### What encryption doesn't protect against
 

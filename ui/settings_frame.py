@@ -171,14 +171,13 @@ class SettingsFrame(ctk.CTkFrame):
             traceback.print_exc()
 
     def _handle_change_pin(self):
-        """Verifies the current PIN or password, then re-encrypts the data key with a new one."""
-        current_dialog = UnlockDialog(self.master_app, verify=app_lock.unlock, kind=app_lock.passcode_kind(),
+        """Verifies the current PIN or password, then sets a new one and moves tokens to a new key."""
+        current_kind = app_lock.passcode_kind()
+        current_dialog = UnlockDialog(self.master_app, verify=app_lock.unlock, kind=current_kind,
                                       title="Verify Current PIN / Password",
-                                      prompt=f"Enter your current {app_lock.describe(app_lock.passcode_kind())} to change it:")
-        data_key = current_dialog.get_result()
-        if not data_key:
-            if current_dialog.attempts_exhausted:
-                messagebox.showerror("Verification Failed", "Too many incorrect attempts.", parent=self.master_app)
+                                      prompt=f"Enter your current {app_lock.describe(current_kind)} to change it:")
+        data_keys = current_dialog.get_result()
+        if not data_keys:
             return
 
         new_dialog = SetPasscodeDialog(self.master_app, title="Set New PIN / Password")
@@ -188,10 +187,13 @@ class SettingsFrame(ctk.CTkFrame):
 
         kind, passcode = result
         try:
-            app_lock.set_passcode(data_key, kind, passcode)
+            app_lock.change_passcode(data_keys, kind, passcode)
             messagebox.showinfo("Updated", f"Your {app_lock.describe(kind)} has been updated.", parent=self.master_app)
         except ValueError as ve:
             messagebox.showerror("Error", str(ve), parent=self.master_app)
         except Exception as e:
             traceback.print_exc()
             messagebox.showerror("Error", f"Could not update your {app_lock.describe(kind)}: {e}", parent=self.master_app)
+        finally:
+            # Tokens moved to new identifiers, so the cards must be rebuilt
+            self.master_app.load_and_display_tokens()

@@ -2,7 +2,7 @@ import hashlib
 import json
 import os
 import pytest
-from core import app_lock
+from core import app_lock, secure_storage as ss
 
 def write_legacy_pin(fake_keyring, pin, new_format=False):
     salt = os.urandom(16)
@@ -24,24 +24,128 @@ def test_invalid_passcodes(kind, passcode):
         app_lock.validate_passcode(kind, passcode)
 
 def test_unlock_with_correct_and_wrong_passcode():
-    data_key = app_lock.create_vault("pin", "246810")
+    data_keys = app_lock.create_vault("pin", "246810")
     assert app_lock.has_vault()
     assert app_lock.passcode_kind() == "pin"
-    assert app_lock.unlock("246810") == data_key
+    assert app_lock.unlock("246810") == data_keys
     assert app_lock.unlock("246811") is None
 
 def test_vault_record_has_no_plaintext_key(fake_keyring):
-    data_key = app_lock.create_vault("password", "correct horse")
+    data_keys = app_lock.create_vault("password", "correct horse")
     record = json.loads(fake_keyring.store[(app_lock.SERVICE_NAME, app_lock.VAULT_KEY)])
-    assert data_key.hex() not in json.dumps(record)
+    assert data_keys.current_key.hex() not in json.dumps(record)
     assert record["kdf"] == "scrypt"
 
-def test_changing_passcode_keeps_data_key():
-    data_key = app_lock.create_vault("pin", "246810")
-    app_lock.set_passcode(data_key, "password", "a much longer password")
+def unlock_and_save_token(passcode, account="alice"):
+    data_keys = app_lock.unlock(passcode)
+    ss.set_data_keys(data_keys)
+    return data_keys, ss.save_token_secret(account, "GitHub", "JBSWY3DPEHPK3PXP")
+
+def test_changing_passcode_replaces_data_key(fake_keyring):
+    app_lock.create_vault("pin", "246810")
+    old_keys, _ = unlock_and_save_token("246810")
+    old_vault_copy = fake_keyring.store[(app_lock.SERVICE_NAME, app_lock.VAULT_KEY)]
+
+    new_keys = app_lock.change_passcode(old_keys, "password", "a much longer password")
+
     assert app_lock.passcode_kind() == "password"
     assert app_lock.unlock("246810") is None
-    assert app_lock.unlock("a much longer password") == data_key
+    assert app_lock.unlock("a much longer password") == new_keys
+    assert new_keys.current_key != old_keys.current_key
+    assert ss._data_keys == new_keys
+    [token] = ss.get_all_token_data()
+    assert token["account_name"] == "alice"
+    stored = json.loads(fake_keyring.store[(ss.SERVICE_NAME, token["identifier"])])
+    assert stored["kid"] == new_keys.current_id
+    assert len(json.loads(fake_keyring.store[(app_lock.SERVICE_NAME, app_lock.VAULT_KEY)])["keys"]) == 1
+
+    # An old copy of the vault plus the old PIN can't read tokens saved after the change
+    fake_keyring.store[(app_lock.SERVICE_NAME, app_lock.VAULT_KEY)] = old_vault_copy
+    ss.set_data_keys(app_lock.unlock("246810"))
+    assert ss.get_token_secret(token["identifier"]) is None
+
+def test_interrupted_passcode_change_finishes_on_next_unlock(fake_keyring, monkeypatch):
+    app_lock.create_vault("pin", "246810")
+    old_keys, _ = unlock_and_save_token("246810")
+    real_reencrypt = ss.reencrypt_outdated_tokens
+    def crash():
+        raise OSError("simulated crash while moving tokens")
+    monkeypatch.setattr(ss, "reencrypt_outdated_tokens", crash)
+
+    staged = app_lock.change_passcode(old_keys, "pin", "135790")
+
+    # The new PIN already works, both keys are kept, and the token is still readable
+    assert len(staged.keys) == 2
+    assert app_lock.unlock("246810") is None
+    assert ss.get_all_token_data()[0]["account_name"] == "alice"
+
+    monkeypatch.setattr(ss, "reencrypt_outdated_tokens", real_reencrypt)
+    finished = app_lock.unlock("135790")
+    assert len(finished.keys) == 1 and finished.current_id == staged.current_id
+    assert len(json.loads(fake_keyring.store[(app_lock.SERVICE_NAME, app_lock.VAULT_KEY)])["keys"]) == 1
+    [token] = ss.get_all_token_data()
+    assert json.loads(fake_keyring.store[(ss.SERVICE_NAME, token["identifier"])])["kid"] == finished.current_id
+
+class FakeClock:
+    def __init__(self, monkeypatch):
+        self.now = 1_000_000.0
+        monkeypatch.setattr(app_lock.time, "time", lambda: self.now)
+
+def test_lockout_starts_after_three_wrong_attempts_and_doubles(monkeypatch):
+    clock = FakeClock(monkeypatch)
+    app_lock.create_vault("pin", "246810")
+    assert app_lock.attempts_before_lockout() == 3
+    for expected_left in (2, 1):
+        assert app_lock.unlock("000000") is None
+        assert app_lock.attempts_before_lockout() == expected_left
+        assert app_lock.seconds_locked_out() == 0
+
+    assert app_lock.unlock("000000") is None
+    assert app_lock.seconds_locked_out() == 30
+    with pytest.raises(app_lock.LockedOutError):
+        app_lock.unlock("246810") # Even the right PIN waits
+
+    clock.now += 30
+    assert app_lock.unlock("000000") is None
+    assert app_lock.seconds_locked_out() == 60
+
+def test_lockout_is_capped_and_survives_restart(monkeypatch, fake_keyring):
+    clock = FakeClock(monkeypatch)
+    app_lock.create_vault("pin", "246810")
+    for _ in range(20):
+        clock.now += app_lock.MAX_LOCKOUT_SECONDS
+        assert app_lock.unlock("000000") is None
+    assert app_lock.seconds_locked_out() == app_lock.MAX_LOCKOUT_SECONDS
+    # Stored in the keyring, so nothing in memory needs to survive; moving the clock back can't extend it
+    assert app_lock.LOCKOUT_KEY in fake_keyring.entries(app_lock.SERVICE_NAME)
+    clock.now -= 10 ** 6
+    assert app_lock.seconds_locked_out() == app_lock.MAX_LOCKOUT_SECONDS
+
+def test_correct_passcode_resets_failures(monkeypatch, fake_keyring):
+    FakeClock(monkeypatch)
+    app_lock.create_vault("pin", "246810")
+    app_lock.unlock("000000")
+    app_lock.unlock("000000")
+    assert app_lock.unlock("246810") is not None
+    assert app_lock.attempts_before_lockout() == 3
+    assert app_lock.LOCKOUT_KEY not in fake_keyring.entries(app_lock.SERVICE_NAME)
+
+def test_unreadable_lockout_entry_is_ignored(fake_keyring):
+    fake_keyring.store[(app_lock.SERVICE_NAME, app_lock.LOCKOUT_KEY)] = "not json"
+    assert app_lock.seconds_locked_out() == 0
+    assert app_lock.attempts_before_lockout() == 3
+
+def test_legacy_pin_uses_the_same_lockout(monkeypatch, fake_keyring):
+    FakeClock(monkeypatch)
+    write_legacy_pin(fake_keyring, "1234")
+    for _ in range(3):
+        assert not app_lock.verify_legacy_pin("9999")
+    with pytest.raises(app_lock.LockedOutError):
+        app_lock.verify_legacy_pin("1234")
+
+@pytest.mark.parametrize("seconds, text", [(1, "1 second"), (30, "30 seconds"), (60, "1 min 00 s"), (900, "15 min 00 s")])
+def test_format_wait(seconds, text):
+    assert app_lock.format_wait(seconds) == text
 
 def test_has_vault_raises_on_keyring_error(fake_keyring):
     fake_keyring.fail_reads = True

@@ -85,13 +85,13 @@ def test_lock_closes_dialogs_and_drops_secrets(app, monkeypatch):
     seen_while_locked = {}
     def unlock_while_checking_state(dialog):
         seen_while_locked.update(dialogs_open=edit_dialog.winfo_exists() or codes_dialog.winfo_exists(),
-                                 cards=len(app.token_cards), data_key=ss._data_key)
+                                 cards=len(app.token_cards), data_keys=ss._data_keys)
         return dialog._verify("correct horse")
     stub_dialog(monkeypatch, UnlockDialog, unlock_while_checking_state)
 
     app.lock_application()
 
-    assert seen_while_locked == {"dialogs_open": False, "cards": 0, "data_key": None}
+    assert seen_while_locked == {"dialogs_open": False, "cards": 0, "data_keys": None}
     assert app.app_unlocked and len(app.token_cards) == 2
 
 def test_reload_cancels_card_timers(app):
@@ -109,22 +109,30 @@ def test_empty_state(app):
     assert app.no_tokens_label.cget("text") == main.NO_TOKENS_TEXT
     assert not app.search_entry.winfo_manager()
 
-def test_unlock_dialog_counts_attempts(no_message_boxes):
+def test_unlock_dialog_counts_attempts_and_locks_out(no_message_boxes):
+    app_lock.create_vault("pin", "123456")
     root = tk.Tk()
     root.withdraw()
     try:
-        dialog = UnlockDialog(root, verify=lambda passcode: "key" if passcode == "123456" else None, kind="pin", max_attempts=2)
+        dialog = UnlockDialog(root, verify=app_lock.unlock, kind="pin")
         dialog.passcode_entry.insert(0, "000000")
         dialog._ok_event()
-        assert "1 attempt(s) left" in dialog.error_label_text.get()
+        assert "2 more attempt(s)" in dialog.error_label_text.get()
+        for _ in range(2):
+            dialog.passcode_entry.insert(0, "000000")
+            dialog._ok_event()
+        assert "Try again in 30 seconds" in dialog.error_label_text.get()
+        assert dialog.ok_button.cget("state") == "disabled"
         dialog.passcode_entry.insert(0, "123456")
-        dialog._ok_event()
-        assert dialog._result == "key" and not dialog.winfo_exists()
+        dialog._ok_event() # Enter during a lockout is ignored too
+        assert dialog.winfo_exists() and dialog._result is None
+        dialog.destroy()
 
-        dialog = UnlockDialog(root, verify=lambda passcode: None, kind="pin", max_attempts=1)
-        dialog.passcode_entry.insert(0, "000000")
-        dialog._ok_event()
-        assert dialog.attempts_exhausted and dialog._result is None
+        # A new window (as after restarting the app) is still locked out
+        dialog = UnlockDialog(root, verify=app_lock.unlock, kind="pin")
+        assert "Try again in" in dialog.error_label_text.get()
+        assert dialog.ok_button.cget("state") == "disabled"
+        dialog.destroy()
     finally:
         root.destroy()
 
@@ -218,15 +226,15 @@ def test_legacy_pin_upgrade(fake_keyring, monkeypatch, no_message_boxes, legacy_
         application._on_closing()
 
 def test_startup_unlock_with_existing_vault(fake_keyring, monkeypatch, no_message_boxes):
-    data_key = app_lock.create_vault("pin", "246810")
-    ss.set_data_key(data_key)
+    data_keys = app_lock.create_vault("pin", "246810")
+    ss.set_data_keys(data_keys)
     ss.save_token_secret("alice", "GitHub", SECRET)
-    ss.clear_data_key()
+    ss.clear_data_keys()
     stub_dialog(monkeypatch, UnlockDialog, stub_unlock_with("246810"))
 
     application = main.TwoFactorApp()
     try:
-        assert application.app_unlocked and ss._data_key == data_key
+        assert application.app_unlocked and ss._data_keys == data_keys
     finally:
         application._on_closing()
 
@@ -240,7 +248,7 @@ def test_lock_screen_error_exits_instead_of_hiding_forever(app, monkeypatch):
 def test_migration_error_does_not_block_unlock(app, monkeypatch):
     def broken_migration():
         raise RuntimeError("simulated migration failure")
-    monkeypatch.setattr(ss, "migrate_plaintext_tokens", broken_migration)
+    monkeypatch.setattr(ss, "reencrypt_outdated_tokens", broken_migration)
     stub_dialog(monkeypatch, UnlockDialog, stub_unlock_with("correct horse"))
     app.lock_application()
     assert app.app_unlocked and len(app.token_cards) == 2
@@ -290,3 +298,18 @@ def test_unlocking_from_settings_hides_settings(app, monkeypatch):
     app.lock_application()
     assert not app.frames[SettingsFrame].winfo_manager()
     assert app.home_frame_container.winfo_manager() == "grid"
+
+def test_change_pin_from_settings_reloads_tokens(app, monkeypatch):
+    from ui.settings_frame import SettingsFrame
+    old_identifiers = set(app.token_cards)
+    stub_dialog(monkeypatch, UnlockDialog, stub_unlock_with("correct horse"))
+    stub_dialog(monkeypatch, SetPasscodeDialog, ("pin", "135790"))
+    app._show_frame_callback("Settings")
+
+    app.frames[SettingsFrame]._handle_change_pin()
+
+    assert app_lock.passcode_kind() == "pin" and app_lock.unlock("135790")
+    # Tokens moved to new identifiers, and the cards point at them
+    assert set(app.token_cards) == {token["identifier"] for token in ss.get_all_token_data()}
+    assert not set(app.token_cards) & old_identifiers
+    assert len(app.token_cards) == 2

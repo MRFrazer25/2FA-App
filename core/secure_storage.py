@@ -4,6 +4,7 @@ import json
 import keyring
 import os
 import uuid
+from typing import NamedTuple
 from cryptography.exceptions import InvalidTag
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 from core import otp
@@ -25,24 +26,38 @@ MIN_SECRET_LENGTH = 16 # 80 bits, the shortest secret commonly issued by service
 ENCRYPTED_TOKEN_VERSION = 2
 NONCE_SIZE_BYTES = 12
 
-# Key that encrypts token data. Only held in memory while the app is unlocked.
-_data_key = None
+class DataKeys(NamedTuple):
+    """Keys that encrypt token data, by key ID. New tokens use current_id; older keys only
+    exist briefly while tokens are moved to a new key after a PIN or password change."""
+    keys: dict[str, bytes]
+    current_id: str
+
+    @property
+    def current_key(self) -> bytes:
+        return self.keys[self.current_id]
+
+# Only held in memory while the app is unlocked
+_data_keys: DataKeys | None = None
 
 class LockedError(RuntimeError):
     """Raised when token data is accessed while the app is locked."""
 
-def set_data_key(data_key: bytes):
-    global _data_key
-    _data_key = data_key
+def new_data_keys() -> DataKeys:
+    key_id = uuid.uuid4().hex
+    return DataKeys({key_id: AESGCM.generate_key(bit_length=256)}, key_id)
 
-def clear_data_key():
-    global _data_key
-    _data_key = None
+def set_data_keys(data_keys: DataKeys):
+    global _data_keys
+    _data_keys = data_keys
 
-def _require_data_key() -> bytes:
-    if _data_key is None:
+def clear_data_keys():
+    global _data_keys
+    _data_keys = None
+
+def _require_data_keys() -> DataKeys:
+    if _data_keys is None:
         raise LockedError("The app is locked.")
-    return _data_key
+    return _data_keys
 
 def normalize_secret_key(secret_key: str) -> str:
     """Returns the secret as unpadded uppercase Base32.
@@ -127,10 +142,12 @@ def _delete_value(key: str):
 def _encrypt_token(identifier: str, data: dict) -> dict:
     """Encrypts token data. The identifier is authenticated too, so an encrypted
     entry can't be swapped in under another token's identifier."""
+    data_keys = _require_data_keys()
     nonce = os.urandom(NONCE_SIZE_BYTES)
-    ciphertext = AESGCM(_require_data_key()).encrypt(nonce, json.dumps(data).encode("utf-8"), identifier.encode("utf-8"))
+    ciphertext = AESGCM(data_keys.current_key).encrypt(nonce, json.dumps(data).encode("utf-8"), identifier.encode("utf-8"))
     return {
         "v": ENCRYPTED_TOKEN_VERSION,
+        "kid": data_keys.current_id,
         "nonce": base64.b64encode(nonce).decode("ascii"),
         "ct": base64.b64encode(ciphertext).decode("ascii"),
     }
@@ -143,7 +160,10 @@ def _decrypt_token(identifier: str, stored: dict) -> dict:
     Entries saved before encryption was added are returned as-is."""
     if not _is_encrypted(stored):
         return stored
-    plaintext = AESGCM(_require_data_key()).decrypt(base64.b64decode(stored["nonce"]),
+    key = _require_data_keys().keys.get(stored.get("kid"))
+    if key is None:
+        raise InvalidTag() # Encrypted with a key that isn't unlocked, so it can't be read
+    plaintext = AESGCM(key).decrypt(base64.b64decode(stored["nonce"]),
                                                     base64.b64decode(stored["ct"]),
                                                     identifier.encode("utf-8"))
     return json.loads(plaintext)
@@ -175,7 +195,7 @@ def save_token_secret(account_name: str, issuer_name: str, secret_key: str, iden
         raise ValueError("Account name, issuer name, and secret key cannot be empty.")
     secret_key = normalize_secret_key(secret_key)
     otp.validate_settings(digits, period, algorithm)
-    _require_data_key()
+    _require_data_keys()
 
     data = {
         "account_name": account_name,
@@ -221,7 +241,7 @@ def get_token_secret(identifier: str) -> dict | None:
     Raises:
         LockedError: If the app is locked.
     """
-    _require_data_key()
+    _require_data_keys()
     try:
         stored = _read_value(identifier)
         if not stored:
@@ -247,24 +267,32 @@ def get_token_secret(identifier: str) -> dict | None:
         print(f"Error retrieving secret: {e}")
         return None
 
-def migrate_plaintext_tokens() -> int:
-    """Encrypts any tokens saved before encryption was added, moving each to a new random
-    identifier. Returns how many tokens were migrated.
+def reencrypt_outdated_tokens() -> int:
+    """Encrypts tokens saved before encryption was added, and re-encrypts tokens on an older
+    data key with the current one, moving each to a new random identifier. Returns how many
+    tokens were rewritten.
 
-    The encrypted copies are written before the account list is switched over, and the
-    plaintext entries are only deleted after that, so an interruption never loses a token.
+    The new copies are written before the account list is switched over, and the old entries
+    are only deleted after that, so an interruption never loses a token.
     """
-    _require_data_key()
+    data_keys = _require_data_keys()
     accounts = get_all_token_identifiers()
     new_accounts = []
     replaced = []
     for identifier in accounts:
         stored = _read_value(identifier)
-        if stored is None or _is_encrypted(stored):
+        if stored is None or (_is_encrypted(stored) and stored.get("kid") == data_keys.current_id):
+            new_accounts.append(identifier)
+            continue
+        try:
+            data = _decrypt_token(identifier, stored)
+        except InvalidTag:
+            # Can't be read with the unlocked keys; leave it rather than stop the others moving
+            print("[secure_storage] Warning: Skipping a token that could not be decrypted.")
             new_accounts.append(identifier)
             continue
         new_identifier = uuid.uuid4().hex
-        _write_value(new_identifier, _encrypt_token(new_identifier, stored))
+        _write_value(new_identifier, _encrypt_token(new_identifier, data))
         new_accounts.append(new_identifier)
         replaced.append(identifier)
 

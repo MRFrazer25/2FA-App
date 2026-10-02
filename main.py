@@ -11,7 +11,6 @@ import keyring
 import traceback
 from ui.sidebar import SidebarFrame
 
-MAX_PIN_ATTEMPTS = 3
 NO_TOKENS_TEXT = "No 2FA tokens found. Click 'Add Token' in the sidebar to add one."
 
 class TwoFactorApp(ctk.CTk):
@@ -117,29 +116,24 @@ class TwoFactorApp(ctk.CTk):
             self.destroy()
         sys.exit(1)
 
-    def _exit_after_failed_unlock(self, dialog) -> bool:
-        if dialog.attempts_exhausted:
-            messagebox.showerror("Access Denied", "Maximum attempts reached. Exiting.", parent=self)
-        self.quit_application_if_pin_cancelled() # This will exit
-        return False
-
-    def _unlock_with_data_key(self, data_key: bytes):
+    def _unlock_with_data_keys(self, data_keys: secure_storage.DataKeys):
         """Makes the tokens readable, and encrypts any saved before encryption was added."""
-        secure_storage.set_data_key(data_key)
+        secure_storage.set_data_keys(data_keys)
         try:
-            secure_storage.migrate_plaintext_tokens()
+            secure_storage.reencrypt_outdated_tokens()
         except Exception:
-            # Unencrypted tokens can still be read; migration is retried on the next unlock
+            # Unencrypted tokens can still be read; this is retried on the next unlock
             traceback.print_exc()
         self.app_unlocked = True
 
     def _prompt_for_pin_and_unlock(self, is_startup_check: bool) -> bool:
         dialog = UnlockDialog(self, verify=app_lock.unlock, kind=app_lock.passcode_kind(),
-                              max_attempts=MAX_PIN_ATTEMPTS, show_cancel=not is_startup_check)
-        data_key = dialog.get_result()
-        if not data_key:
-            return self._exit_after_failed_unlock(dialog)
-        self._unlock_with_data_key(data_key)
+                              show_cancel=not is_startup_check)
+        data_keys = dialog.get_result()
+        if not data_keys:
+            self.quit_application_if_pin_cancelled() # This will exit
+            return False
+        self._unlock_with_data_keys(data_keys)
         return True
 
     def _set_up_passcode(self) -> bool:
@@ -151,21 +145,22 @@ class TwoFactorApp(ctk.CTk):
         if not result:
             self.quit_application_if_pin_cancelled() # This will exit
             return False
-        self._unlock_with_data_key(app_lock.create_vault(*result))
+        self._unlock_with_data_keys(app_lock.create_vault(*result))
         return True
 
     def _upgrade_legacy_pin(self) -> bool:
         """Upgrades a PIN from before encryption was added: checks it, then uses it, or a new
         PIN or password if it's too short, to encrypt the tokens."""
         dialog = UnlockDialog(self, verify=lambda pin: pin if app_lock.verify_legacy_pin(pin) else None, kind=app_lock.KIND_PIN,
-                              max_attempts=MAX_PIN_ATTEMPTS, show_cancel=False)
+                              show_cancel=False)
         pin = dialog.get_result()
         if not pin:
-            return self._exit_after_failed_unlock(dialog)
+            self.quit_application_if_pin_cancelled() # This will exit
+            return False
 
         kind = app_lock.legacy_pin_kind(pin)
         if kind:
-            data_key = app_lock.create_vault(kind, pin)
+            data_keys = app_lock.create_vault(kind, pin)
             message = f"Your tokens are now encrypted with your {app_lock.describe(kind)}. If you forget it, they can't be recovered, so keep an encrypted backup (Settings > Backup Tokens)."
         else:
             setup_dialog = SetPasscodeDialog(self, title="Choose a Stronger PIN or Password",
@@ -176,10 +171,10 @@ class TwoFactorApp(ctk.CTk):
             if not result:
                 self.quit_application_if_pin_cancelled() # This will exit
                 return False
-            data_key = app_lock.create_vault(*result)
+            data_keys = app_lock.create_vault(*result)
             message = "Your tokens are now encrypted."
 
-        self._unlock_with_data_key(data_key)
+        self._unlock_with_data_keys(data_keys)
         messagebox.showinfo("Tokens Encrypted", message, parent=self)
         return True
 
@@ -366,7 +361,7 @@ class TwoFactorApp(ctk.CTk):
         self.withdraw()
         # Drop decrypted secrets from memory until the app is unlocked again
         self._destroy_token_cards()
-        secure_storage.clear_data_key()
+        secure_storage.clear_data_keys()
 
         try:
             unlocked = self._prompt_for_pin_and_unlock(is_startup_check=False)

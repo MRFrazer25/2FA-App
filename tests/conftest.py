@@ -41,12 +41,12 @@ def fake_keyring(monkeypatch):
     # Real scrypt settings take about a second per unlock; the tests don't need that
     monkeypatch.setattr(app_lock, "SCRYPT_N", 2 ** 10)
     yield backend
-    secure_storage.clear_data_key()
+    secure_storage.clear_data_keys()
     keyring.set_keyring(previous)
 
 @pytest.fixture
 def unlocked(fake_keyring):
     """Sets up a vault with the password 'correct horse' and unlocks storage."""
-    data_key = app_lock.create_vault(app_lock.KIND_PASSWORD, "correct horse")
-    secure_storage.set_data_key(data_key)
-    return data_key
+    data_keys = app_lock.create_vault(app_lock.KIND_PASSWORD, "correct horse")
+    secure_storage.set_data_keys(data_keys)
+    return data_keys

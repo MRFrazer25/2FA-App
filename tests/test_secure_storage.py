@@ -25,7 +25,7 @@ def test_secrets_and_names_are_encrypted_at_rest(unlocked, fake_keyring):
 
 def test_locked_storage_refuses_access(unlocked):
     identifier = save()
-    ss.clear_data_key()
+    ss.clear_data_keys()
     with pytest.raises(ss.LockedError):
         ss.get_token_secret(identifier)
     with pytest.raises(ss.LockedError):
@@ -33,7 +33,7 @@ def test_locked_storage_refuses_access(unlocked):
 
 def test_wrong_key_cannot_decrypt(unlocked):
     identifier = save()
-    ss.set_data_key(b"\x00" * 32)
+    ss.set_data_keys(ss.DataKeys({unlocked.current_id: b"\x00" * 32}, unlocked.current_id))
     assert ss.get_token_secret(identifier) is None
 
 def test_encrypted_entries_cannot_be_swapped(unlocked, fake_keyring):
@@ -118,7 +118,7 @@ def test_migration_encrypts_plaintext_tokens(unlocked, fake_keyring):
     fake_keyring.store[(ss.SERVICE_NAME, ss.ACCOUNTS_LIST_KEY)] = json.dumps(["legacy_legacy@example.com"])
     encrypted_id = save()
 
-    assert ss.migrate_plaintext_tokens() == 1
+    assert ss.reencrypt_outdated_tokens() == 1
 
     identifiers = ss.get_all_token_identifiers()
     assert len(identifiers) == 2 and identifiers[1] == encrypted_id
@@ -126,7 +126,7 @@ def test_migration_encrypts_plaintext_tokens(unlocked, fake_keyring):
     assert (token["account_name"], token["recovery_codes"], token["digits"]) == ("legacy@example.com", "old-code", 6)
     stored = "".join(fake_keyring.entries(ss.SERVICE_NAME).values())
     assert "old-code" not in stored and "legacy_legacy@example.com" not in fake_keyring.entries(ss.SERVICE_NAME)
-    assert ss.migrate_plaintext_tokens() == 0
+    assert ss.reencrypt_outdated_tokens() == 0
 
 def test_interrupted_migration_loses_nothing(unlocked, fake_keyring, monkeypatch):
     write_legacy_token(fake_keyring, "legacy_one")
@@ -138,10 +138,10 @@ def test_interrupted_migration_loses_nothing(unlocked, fake_keyring, monkeypatch
         real_set(service, username, password)
     monkeypatch.setattr(fake_keyring, "set_password", failing_set)
     with pytest.raises(OSError):
-        ss.migrate_plaintext_tokens()
+        ss.reencrypt_outdated_tokens()
 
     monkeypatch.setattr(fake_keyring, "set_password", real_set)
     assert ss.get_all_token_identifiers() == ["legacy_one"]
     assert ss.get_token_secret("legacy_one")["account_name"] == "legacy@example.com"
-    assert ss.migrate_plaintext_tokens() == 1
+    assert ss.reencrypt_outdated_tokens() == 1
     assert len(ss.get_all_token_data()) == 1

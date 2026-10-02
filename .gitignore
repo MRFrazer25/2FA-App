@@ -57,3 +57,10 @@ Desktop.ini
 $RECYCLE.BIN/
 # Cursor editor files (including auto-generated Snyk rules)
 .cursor/
+
+# Secrets and keys (none are used today; this keeps any added later out of git)
+.env.*
+!.env.example
+*.pem
+*.key
+keys/

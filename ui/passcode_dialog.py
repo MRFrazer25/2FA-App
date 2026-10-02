@@ -93,16 +93,18 @@ class _ModalDialog(ctk.CTkToplevel):
 
 class UnlockDialog(_ModalDialog):
     """Asks for the PIN or password and checks it with verify(passcode), which returns
-    a truthy result (e.g. the data key) when correct. get_result() returns that result,
-    or None if the dialog was cancelled or ran out of attempts (see attempts_exhausted)."""
+    a truthy result (e.g. the data keys) when correct. get_result() returns that result,
+    or None if the dialog was cancelled.
+
+    Wrong attempts are counted by app_lock, which survives restarts. During a lockout
+    the dialog shows a countdown and the OK button is disabled."""
     def __init__(self, master, verify, kind=app_lock.KIND_PASSWORD, title="Unlock Application",
-                 prompt=None, max_attempts=3, show_cancel=True):
+                 prompt=None, show_cancel=True):
         super().__init__(master, title, show_cancel)
         self._result = None
         self._verify = verify
         self._kind = kind
-        self._attempts_left = max_attempts
-        self.attempts_exhausted = False
+        self._countdown_job = None
         name = app_lock.describe(kind)
 
         self.prompt_label = ctk.CTkLabel(self, text=prompt or f"Enter your {name} to unlock:", wraplength=300, justify="center")
@@ -117,11 +119,42 @@ class UnlockDialog(_ModalDialog):
 
         self._add_buttons()
         self.passcode_entry.after(100, self.passcode_entry.focus_force)
+        self._show_lockout(self._seconds_locked_out()) # A lockout may still be running from earlier
+
+    def _seconds_locked_out(self) -> int:
+        try:
+            return app_lock.seconds_locked_out()
+        except Exception:
+            traceback.print_exc()
+            return 0 # unlock() checks again and reports the error
+
+    def _show_lockout(self, seconds: int):
+        """Disables OK and counts down while locked out."""
+        if self._countdown_job:
+            self.after_cancel(self._countdown_job)
+            self._countdown_job = None
+        if seconds <= 0:
+            self.ok_button.configure(state="normal")
+            if self.error_label_text.get().startswith("Too many"):
+                self.error_label_text.set("")
+            return
+        self.ok_button.configure(state="disabled")
+        self.error_label_text.set(f"Too many incorrect attempts. Try again in {app_lock.format_wait(seconds)}.")
+        self._countdown_job = self.after(1000, lambda: self._show_lockout(self._seconds_locked_out()))
+
+    def destroy(self):
+        if self._countdown_job:
+            self.after_cancel(self._countdown_job)
+            self._countdown_job = None
+        super().destroy()
 
     def _ok_event(self, event=None):
+        if self._countdown_job:
+            return # Locked out; Enter shouldn't get around the disabled OK button
         passcode = self.passcode_entry.get()
+        name = app_lock.describe(self._kind)
         if not passcode:
-            self.error_label_text.set(f"{app_lock.describe(self._kind).capitalize()} cannot be empty.")
+            self.error_label_text.set(f"{name.capitalize()} cannot be empty.")
             return
 
         self.error_label_text.set("Checking...")
@@ -129,10 +162,14 @@ class UnlockDialog(_ModalDialog):
         self.update_idletasks() # Show "Checking..." while the (deliberately slow) check runs
         try:
             result = self._verify(passcode)
+        except app_lock.LockedOutError as e:
+            _clear_entry(self.passcode_entry)
+            self._show_lockout(e.seconds)
+            return
         except Exception as e:
             traceback.print_exc()
             self.ok_button.configure(state="normal")
-            self.error_label_text.set(f"Could not check the {app_lock.describe(self._kind)}: {e}")
+            self.error_label_text.set(f"Could not check the {name}: {e}")
             return
         if not self.winfo_exists():
             return
@@ -141,14 +178,20 @@ class UnlockDialog(_ModalDialog):
             self._finish(result)
             return
 
-        self._attempts_left -= 1
-        if self._attempts_left <= 0:
-            self.attempts_exhausted = True
-            self._finish(None)
-            return
-        self.error_label_text.set(f"Incorrect {app_lock.describe(self._kind)}. {self._attempts_left} attempt(s) left.")
         _clear_entry(self.passcode_entry)
         self.passcode_entry.focus()
+        locked_seconds = self._seconds_locked_out()
+        if locked_seconds:
+            self._show_lockout(locked_seconds)
+            return
+        message = f"Incorrect {name}."
+        try:
+            attempts_left = app_lock.attempts_before_lockout()
+        except Exception:
+            attempts_left = 0
+        if attempts_left:
+            message += f" {attempts_left} more attempt(s) before you have to wait {app_lock.format_wait(app_lock.LOCKOUT_BASE_SECONDS)}."
+        self.error_label_text.set(message)
 
 class SetPasscodeDialog(_ModalDialog):
     """Lets the user choose a PIN or password and enter it twice.
