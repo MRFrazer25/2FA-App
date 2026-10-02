@@ -17,7 +17,7 @@ A secure and modern two-factor authentication (2FA) desktop application built wi
 
 ## Security
 
-*   **Token Encryption:** Each token is encrypted with AES-256-GCM using a random data key. The data key is itself encrypted with a key derived from your PIN or password using scrypt (N=2^17, r=8, p=1, the OWASP recommendation), so tokens can't be read without it. Changing your PIN or password also moves every token to a new data key, so an old copy of your data plus your old PIN or password can't read them.
+*   **Token Encryption:** Each token is encrypted with AES-256-GCM using a random data key. The data key is itself encrypted with a key derived from your PIN or password using scrypt (N=2^17, r=8, p=1, the OWASP recommendation), so tokens can't be read without it. Changing your PIN or password also moves every token to a new data key, so someone with an old copy of your keyring and your old PIN or password can't read your tokens as they're stored now, or any you add later. (Nothing can stop them reading what was in that old copy.)
 *   **System Keyring:** The encrypted tokens and encrypted data key are stored in your OS's credential manager. Keyring entries use random IDs, so they don't reveal which services you use.
 *   **Backup Encryption:** Backups are encrypted using AES-256-GCM with a key derived from a separate backup password using PBKDF2-SHA256 with 600,000 iterations (`cryptography` library). Backups made by older versions can still be restored.
 *   **Wrong-Attempt Lockout:** After 3 wrong PIN or password attempts in a row, the app makes you wait 30 seconds, doubling with each further wrong attempt up to 15 minutes. The count is kept in the keyring, so restarting the app doesn't reset it.

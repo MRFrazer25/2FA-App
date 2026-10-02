@@ -313,3 +313,22 @@ def test_change_pin_from_settings_reloads_tokens(app, monkeypatch):
     assert set(app.token_cards) == {token["identifier"] for token in ss.get_all_token_data()}
     assert not set(app.token_cards) & old_identifiers
     assert len(app.token_cards) == 2
+
+def test_cancelling_after_verify_still_reloads_moved_tokens(app, monkeypatch):
+    """If an earlier PIN change was interrupted, verifying in Settings finishes moving tokens
+    to new identifiers, so the cards must be rebuilt even if the new PIN is then cancelled."""
+    from ui.settings_frame import SettingsFrame
+    real_reencrypt = ss.reencrypt_outdated_tokens
+    def crash():
+        raise OSError("simulated crash while moving tokens")
+    monkeypatch.setattr(ss, "reencrypt_outdated_tokens", crash)
+    app_lock.change_passcode(ss._data_keys, "pin", "135790") # Interrupted: tokens not moved yet
+    monkeypatch.setattr(ss, "reencrypt_outdated_tokens", real_reencrypt)
+    app.load_and_display_tokens()
+
+    stub_dialog(monkeypatch, UnlockDialog, stub_unlock_with("135790")) # Finishes the move
+    stub_dialog(monkeypatch, SetPasscodeDialog, None) # User cancels the new PIN
+    app._show_frame_callback("Settings")
+    app.frames[SettingsFrame]._handle_change_pin()
+
+    assert set(app.token_cards) == {token["identifier"] for token in ss.get_all_token_data()}

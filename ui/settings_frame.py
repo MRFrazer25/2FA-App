@@ -180,20 +180,22 @@ class SettingsFrame(ctk.CTkFrame):
         if not data_keys:
             return
 
-        new_dialog = SetPasscodeDialog(self.master_app, title="Set New PIN / Password")
-        result = new_dialog.get_result()
-        if not result:
-            return
-
-        kind, passcode = result
         try:
-            app_lock.change_passcode(data_keys, kind, passcode)
-            messagebox.showinfo("Updated", f"Your {app_lock.describe(kind)} has been updated.", parent=self.master_app)
-        except ValueError as ve:
-            messagebox.showerror("Error", str(ve), parent=self.master_app)
-        except Exception as e:
-            traceback.print_exc()
-            messagebox.showerror("Error", f"Could not update your {app_lock.describe(kind)}: {e}", parent=self.master_app)
+            new_dialog = SetPasscodeDialog(self.master_app, title="Set New PIN / Password")
+            result = new_dialog.get_result()
+            if not result:
+                return
+
+            kind, passcode = result
+            try:
+                app_lock.change_passcode(data_keys, kind, passcode)
+                messagebox.showinfo("Updated", f"Your {app_lock.describe(kind)} has been updated.", parent=self.master_app)
+            except ValueError as ve:
+                messagebox.showerror("Error", str(ve), parent=self.master_app)
+            except Exception as e:
+                traceback.print_exc()
+                messagebox.showerror("Error", f"Could not update your {app_lock.describe(kind)}: {e}", parent=self.master_app)
         finally:
-            # Tokens moved to new identifiers, so the cards must be rebuilt
+            # Tokens move to new identifiers when the PIN changes, and verifying can also finish
+            # an earlier interrupted change, so rebuild the cards whenever verification succeeded
             self.master_app.load_and_display_tokens()
