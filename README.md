@@ -11,13 +11,14 @@ A secure and modern two-factor authentication (2FA) desktop application built wi
 *   **Token Management:** Add, edit, and delete TOTP tokens, including 6, 7, or 8 digit codes, 30 or 60 second periods, and SHA1, SHA256, or SHA512.
 *   **Recovery Code Storage:** Optionally save recovery codes alongside your tokens for easy access.
 *   **Search:** Quickly find tokens by issuer or account name.
-*   **Auto-Lock:** Automatically locks after a configurable period of inactivity.
+*   **Auto-Lock:** Automatically locks after a configurable period of inactivity. If the timeout can't be saved, Settings shows an error and keeps the previous value.
+*   **Single Instance:** Only one copy of the app can run at a time, so a second window can't keep writing tokens with a PIN or password that was just changed.
 *   **Clipboard Integration:** Copy TOTP codes; the clipboard clears after 30 seconds, or right away when the app locks or closes.
 *   **Encrypted Backup & Restore:** Export/Import tokens to/from a password-protected, AES-GCM encrypted JSON file. Restoring skips tokens that are already in the app.
 
 ## Security
 
-*   **Token Encryption:** Each token is encrypted with AES-256-GCM using a random data key. The data key is itself encrypted with a key derived from your PIN or password using scrypt (N=2^17, r=8, p=1, the OWASP recommendation), so tokens can't be read without it. Changing your PIN or password also moves every token to a new data key, so someone with an old copy of your keyring and your old PIN or password can't read your tokens as they're stored now, or any you add later. (Nothing can stop them reading what was in that old copy.)
+*   **Token Encryption:** Each token is encrypted with AES-256-GCM using a random data key. The data key is itself encrypted with a key derived from your PIN or password using scrypt (N=2^17, r=8, p=1, the OWASP recommendation), so tokens can't be read without it. Changing your PIN or password also moves every token to a new data key, so someone with an old copy of your keyring and your old PIN or password can't read your tokens as they're stored now, or any you add later. (Nothing can stop them reading what was in that old copy.) After tokens saved before encryption was added have been encrypted, unencrypted entries are rejected so they can't be planted in the keyring.
 *   **System Keyring:** The encrypted tokens and encrypted data key are stored in your OS's credential manager. Keyring entries use random IDs, so they don't reveal which services you use.
 *   **Backup Encryption:** Backups are encrypted using AES-256-GCM with a key derived from a separate backup password using PBKDF2-SHA256 with 600,000 iterations (`cryptography` library). Backups made by older versions can still be restored.
 *   **Wrong-Attempt Lockout:** After 3 wrong PIN or password attempts in a row, the app makes you wait 30 seconds, doubling with each further wrong attempt up to 15 minutes. The count is kept in the keyring, so restarting the app doesn't reset it.
@@ -70,7 +71,7 @@ Your tokens can't be decrypted without it, and there is no recovery option. Keep
 ```bash
 python main.py
 ```
-On first launch, you'll choose a PIN or password. Navigate settings to manage auto-lock, change your PIN or password, or backup/restore your tokens.
+On first launch, you'll choose a PIN or password. Navigate settings to manage auto-lock, change your PIN or password, or backup/restore your tokens. Opening a second copy shows an error and exits; only one copy can run at a time.
 
 **Upgrading from an older version:** enter your existing PIN as usual. Your tokens are then encrypted automatically. If your PIN is shorter than the new minimum, you'll be asked to choose a new PIN or password first. Backups made after upgrading can't be restored by older versions.
 

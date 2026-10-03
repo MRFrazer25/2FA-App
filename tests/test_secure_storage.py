@@ -114,6 +114,7 @@ def write_legacy_token(fake_keyring, identifier, **overrides):
     fake_keyring.store[(ss.SERVICE_NAME, identifier)] = json.dumps(data)
 
 def test_migration_encrypts_plaintext_tokens(unlocked, fake_keyring):
+    ss.set_data_keys(unlocked._replace(migrated=False))
     write_legacy_token(fake_keyring, "legacy_legacy@example.com")
     fake_keyring.store[(ss.SERVICE_NAME, ss.ACCOUNTS_LIST_KEY)] = json.dumps(["legacy_legacy@example.com"])
     encrypted_id = save()
@@ -129,6 +130,7 @@ def test_migration_encrypts_plaintext_tokens(unlocked, fake_keyring):
     assert ss.reencrypt_outdated_tokens() == 0
 
 def test_interrupted_migration_loses_nothing(unlocked, fake_keyring, monkeypatch):
+    ss.set_data_keys(unlocked._replace(migrated=False))
     write_legacy_token(fake_keyring, "legacy_one")
     fake_keyring.store[(ss.SERVICE_NAME, ss.ACCOUNTS_LIST_KEY)] = json.dumps(["legacy_one"])
     real_set = fake_keyring.set_password
@@ -145,3 +147,26 @@ def test_interrupted_migration_loses_nothing(unlocked, fake_keyring, monkeypatch
     assert ss.get_token_secret("legacy_one")["account_name"] == "legacy@example.com"
     assert ss.reencrypt_outdated_tokens() == 1
     assert len(ss.get_all_token_data()) == 1
+
+def test_plaintext_rejected_after_migration(unlocked, fake_keyring):
+    write_legacy_token(fake_keyring, "planted")
+    fake_keyring.store[(ss.SERVICE_NAME, ss.ACCOUNTS_LIST_KEY)] = json.dumps(["planted"])
+    assert unlocked.migrated is True
+    assert ss.get_token_secret("planted") is None
+    assert ss.get_all_token_data() == []
+    assert ss.reencrypt_outdated_tokens() == 0
+    assert json.loads(fake_keyring.store[(ss.SERVICE_NAME, "planted")])["secret_key"] == SECRET + "===="
+
+def test_non_string_token_fields_rejected(unlocked):
+    with pytest.raises(ValueError, match="must be text"):
+        save(account=["alice"], issuer="GitHub")
+    with pytest.raises(ValueError, match="must be text"):
+        ss.check_token_fields("alice", "GitHub", SECRET, ["code"])
+    assert ss.get_all_token_data() == []
+
+def test_save_auto_lock_setting_raises(fake_keyring, monkeypatch):
+    def boom(service, username, password):
+        raise OSError("simulated save failure")
+    monkeypatch.setattr(fake_keyring, "set_password", boom)
+    with pytest.raises(OSError, match="simulated save failure"):
+        ss.save_auto_lock_setting(60)

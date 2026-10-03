@@ -92,22 +92,24 @@ def token_fingerprint(token: dict) -> tuple:
     return (token.get("issuer_name"), token.get("account_name"), secret)
 
 def restore_tokens(tokens: list[dict]) -> tuple[int, int, int]:
-    """Saves tokens from a backup, skipping any already stored.
-    Returns (restored, skipped, failed) counts."""
+    """Saves tokens from a backup, skipping any already stored. Tokens with missing or
+    invalid fields count as failed.
+    Returns (restored, skipped, failed) counts.
+
+    Raises:
+        LockedError: If the app is locked, or the PIN or password was changed since it was unlocked.
+    """
     existing_tokens = {token_fingerprint(token) for token in secure_storage.get_all_token_data()}
     restored_count = skipped_count = failed_count = 0
     for token_data in tokens:
-        if not (token_data.get("account_name") and token_data.get("issuer_name") and token_data.get("secret_key")):
-            print("Skipping a token due to missing critical data.")
-            failed_count += 1
-            continue
-
-        fingerprint = token_fingerprint(token_data)
-        if fingerprint in existing_tokens:
-            skipped_count += 1
-            continue
-
         try:
+            secure_storage.check_token_fields(token_data.get("account_name"), token_data.get("issuer_name"),
+                                              token_data.get("secret_key"), token_data.get("recovery_codes"))
+            fingerprint = token_fingerprint(token_data)
+            if fingerprint in existing_tokens:
+                skipped_count += 1
+                continue
+
             secure_storage.save_token_secret(
                 account_name=token_data["account_name"],
                 issuer_name=token_data["issuer_name"],
@@ -119,6 +121,8 @@ def restore_tokens(tokens: list[dict]) -> tuple[int, int, int]:
             )
             existing_tokens.add(fingerprint)
             restored_count += 1
+        except secure_storage.LockedError:
+            raise
         except Exception as e:
             print(f"Failed to restore a token: {e}")
             failed_count += 1

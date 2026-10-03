@@ -17,11 +17,11 @@ ALGORITHMS = {
 
 def validate_settings(digits: int, period: int, algorithm: str):
     """Raises ValueError if the code length, period, or algorithm isn't supported."""
-    if digits not in DIGIT_OPTIONS:
+    if not isinstance(digits, int) or digits not in DIGIT_OPTIONS:
         raise ValueError(f"Code length must be {', '.join(map(str, DIGIT_OPTIONS))} digits.")
     if not isinstance(period, int) or not MIN_PERIOD <= period <= MAX_PERIOD:
         raise ValueError(f"Code period must be between {MIN_PERIOD} and {MAX_PERIOD} seconds.")
-    if algorithm not in ALGORITHMS:
+    if not isinstance(algorithm, str) or algorithm not in ALGORITHMS:
         raise ValueError(f"Algorithm must be one of {', '.join(ALGORITHMS)}.")
 
 def make_totp(secret_key: str, digits: int = DEFAULT_DIGITS, period: int = DEFAULT_PERIOD,

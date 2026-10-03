@@ -9,6 +9,11 @@ keyring plus the old PIN or password can't decrypt tokens saved afterwards. Whil
 tokens are being moved to the new key, the vault holds both keys (wrapped with the
 new PIN or password); the next unlock finishes the move if it was interrupted.
 
+Tokens saved before encryption was added are encrypted when the vault is created (or on
+the next unlock if that was interrupted). The vault then records that this is done, as part
+of the authenticated data of each wrapped key, so the record can't be removed or changed
+without the PIN or password; from then on unencrypted token entries are rejected.
+
 Wrong attempts are counted in the keyring, so the lockout survives restarts.
 """
 import base64
@@ -40,6 +45,7 @@ SCRYPT_R = 8
 SCRYPT_P = 1
 NONCE_SIZE_BYTES = 12
 WRAP_ASSOCIATED_DATA = b"2FA App data key "
+MIGRATED_ASSOCIATED_DATA = b" migrated"
 
 # After this many wrong attempts in a row, each further wrong attempt starts a wait that
 # doubles from LOCKOUT_BASE_SECONDS, capped so a mistyping prankster can't lock you out for long
@@ -137,12 +143,15 @@ def _load_vault_record() -> dict | None:
     stored = keyring.get_password(SERVICE_NAME, VAULT_KEY)
     return json.loads(stored) if stored else None
 
+def _wrap_associated_data(key_id: str, migrated: bool) -> bytes:
+    return WRAP_ASSOCIATED_DATA + key_id.encode("ascii") + (MIGRATED_ASSOCIATED_DATA if migrated else b"")
+
 def _write_vault(kind: str, wrapping_key: bytes, salt: bytes, params: tuple[int, int, int], data_keys: DataKeys):
     """Stores every data key wrapped with the wrapping key, in a single keyring write."""
     wrapped_keys = {}
     for key_id, key in data_keys.keys.items():
         nonce = os.urandom(NONCE_SIZE_BYTES)
-        wrapped = AESGCM(wrapping_key).encrypt(nonce, key, WRAP_ASSOCIATED_DATA + key_id.encode("ascii"))
+        wrapped = AESGCM(wrapping_key).encrypt(nonce, key, _wrap_associated_data(key_id, data_keys.migrated))
         wrapped_keys[key_id] = {"nonce": _b64(nonce), "wrapped": _b64(wrapped)}
     n, r, p = params
     record = {
@@ -154,29 +163,35 @@ def _write_vault(kind: str, wrapping_key: bytes, salt: bytes, params: tuple[int,
         "p": p,
         "salt": _b64(salt),
         "current": data_keys.current_id,
+        "migrated": data_keys.migrated,
         "keys": wrapped_keys,
     }
     keyring.set_password(SERVICE_NAME, VAULT_KEY, json.dumps(record))
 
 def _unwrap_keys(record: dict, wrapping_key: bytes) -> DataKeys:
-    """Raises InvalidTag if the wrapping key (i.e. the PIN or password) is wrong."""
+    """Raises InvalidTag if the wrapping key (i.e. the PIN or password) is wrong, or the
+    record was changed without it."""
+    migrated = record.get("migrated") is True
     keys = {}
     for key_id, wrapped in record["keys"].items():
         keys[key_id] = AESGCM(wrapping_key).decrypt(base64.b64decode(wrapped["nonce"]),
                                                     base64.b64decode(wrapped["wrapped"]),
-                                                    WRAP_ASSOCIATED_DATA + key_id.encode("ascii"))
-    return DataKeys(keys, record["current"])
-
-def _only_current(data_keys: DataKeys) -> DataKeys:
-    return DataKeys({data_keys.current_id: data_keys.current_key}, data_keys.current_id)
+                                                    _wrap_associated_data(key_id, migrated))
+    return DataKeys(keys, record["current"], migrated)
 
 def _move_tokens_to_current_key(kind, wrapping_key, salt, params, data_keys: DataKeys) -> DataKeys:
-    """Re-encrypts tokens still on older keys, then removes those keys from the vault.
-    If interrupted, the vault still holds every key and the next unlock tries again."""
+    """Encrypts tokens saved before encryption was added and re-encrypts tokens still on older
+    keys, then removes those keys from the vault and records that every token is encrypted.
+    If this fails, the vault is left as it was and the next unlock tries again. Either way, the
+    returned keys are made active in secure_storage."""
     secure_storage.set_data_keys(data_keys)
-    secure_storage.reencrypt_outdated_tokens()
-    final_keys = _only_current(data_keys)
-    _write_vault(kind, wrapping_key, salt, params, final_keys)
+    final_keys = DataKeys({data_keys.current_id: data_keys.current_key}, data_keys.current_id)
+    try:
+        secure_storage.reencrypt_outdated_tokens()
+        _write_vault(kind, wrapping_key, salt, params, final_keys)
+    except Exception as e:
+        print(f"Could not finish encrypting tokens with the current key, will retry on next unlock: {e}")
+        return data_keys
     secure_storage.set_data_keys(final_keys)
     return final_keys
 
@@ -190,17 +205,25 @@ def passcode_kind() -> str:
     record = _load_vault_record()
     return record.get("kind", KIND_PASSWORD) if record else KIND_PASSWORD
 
+def current_key_id() -> str | None:
+    """Returns the ID of the data key new tokens must be encrypted with, or None if there's no
+    vault. Keyring errors are raised."""
+    record = _load_vault_record()
+    return record["current"] if record else None
+
 def create_vault(kind: str, passcode: str) -> DataKeys:
-    """Creates a new random data key protected by the given PIN or password and returns it.
-    Any legacy PIN hash is removed."""
+    """Creates a new random data key protected by the given PIN or password, encrypts any
+    tokens saved before encryption was added, and returns the key, which is also made active
+    in secure_storage. Any legacy PIN hash is removed."""
     validate_passcode(kind, passcode)
-    data_keys = secure_storage.new_data_keys()
+    data_keys = secure_storage.new_data_keys()._replace(migrated=False)
     salt = os.urandom(16)
     params = (SCRYPT_N, SCRYPT_R, SCRYPT_P)
-    _write_vault(kind, _derive_wrapping_key(passcode, salt, *params), salt, params, data_keys)
+    wrapping_key = _derive_wrapping_key(passcode, salt, *params)
+    _write_vault(kind, wrapping_key, salt, params, data_keys)
     _reset_failed_attempts()
     _delete_legacy_pin()
-    return data_keys
+    return _move_tokens_to_current_key(kind, wrapping_key, salt, params, data_keys)
 
 def unlock(passcode: str) -> DataKeys | None:
     """Returns the data keys if the PIN or password is correct, otherwise None.
@@ -223,12 +246,10 @@ def unlock(passcode: str) -> DataKeys | None:
         return None
     _reset_failed_attempts()
 
-    if len(data_keys.keys) > 1:
-        # A change of PIN or password was interrupted before every token moved to the new key
-        try:
-            return _move_tokens_to_current_key(record["kind"], wrapping_key, salt, params, data_keys)
-        except Exception as e:
-            print(f"Could not finish moving tokens to the new key, will retry on next unlock: {e}")
+    if len(data_keys.keys) > 1 or not data_keys.migrated:
+        # A change of PIN or password, or encrypting tokens from before encryption was added,
+        # was interrupted, or the vault was made by a version that didn't record the latter
+        return _move_tokens_to_current_key(record["kind"], wrapping_key, salt, params, data_keys)
     return data_keys
 
 def change_passcode(data_keys: DataKeys, kind: str, passcode: str) -> DataKeys:
@@ -237,20 +258,15 @@ def change_passcode(data_keys: DataKeys, kind: str, passcode: str) -> DataKeys:
     made active in secure_storage."""
     validate_passcode(kind, passcode)
     new_keys = secure_storage.new_data_keys()
-    staged_keys = DataKeys({**data_keys.keys, **new_keys.keys}, new_keys.current_id)
+    staged_keys = DataKeys({**data_keys.keys, **new_keys.keys}, new_keys.current_id, data_keys.migrated)
     salt = os.urandom(16)
     params = (SCRYPT_N, SCRYPT_R, SCRYPT_P)
     wrapping_key = _derive_wrapping_key(passcode, salt, *params)
 
-    # From this write on only the new PIN or password works; old keys stay until tokens move
+    # From this write on only the new PIN or password works; old keys stay until tokens move.
+    # If moving them fails, the new PIN or password is still in effect and every token stays readable.
     _write_vault(kind, wrapping_key, salt, params, staged_keys)
-    try:
-        return _move_tokens_to_current_key(kind, wrapping_key, salt, params, staged_keys)
-    except Exception as e:
-        # The new PIN or password is already in effect and every token is still readable
-        print(f"Could not finish moving tokens to the new key, will retry on next unlock: {e}")
-        secure_storage.set_data_keys(staged_keys)
-        return staged_keys
+    return _move_tokens_to_current_key(kind, wrapping_key, salt, params, staged_keys)
 
 # Legacy PIN (hash only, from before encryption was added)
 

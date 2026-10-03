@@ -3,6 +3,7 @@ import json
 import os
 import pytest
 from core import app_lock, secure_storage as ss
+from tests.test_secure_storage import write_legacy_token
 
 def write_legacy_pin(fake_keyring, pin, new_format=False):
     salt = os.urandom(16)
@@ -40,6 +41,52 @@ def unlock_and_save_token(passcode, account="alice"):
     data_keys = app_lock.unlock(passcode)
     ss.set_data_keys(data_keys)
     return data_keys, ss.save_token_secret(account, "GitHub", "JBSWY3DPEHPK3PXP")
+
+def test_save_refused_after_stale_keys_left_from_passcode_change(fake_keyring):
+    app_lock.create_vault("pin", "246810")
+    old_keys, _ = unlock_and_save_token("246810")
+    new_keys = app_lock.change_passcode(old_keys, "pin", "135790")
+    ss.set_data_keys(old_keys)
+    with pytest.raises(ss.LockedError, match="changed"):
+        ss.save_token_secret("bob", "GitHub", "JBSWY3DPEHPK3PXP")
+    ss.set_data_keys(new_keys)
+    [token] = ss.get_all_token_data()
+    assert token["account_name"] == "alice"
+    assert json.loads(fake_keyring.store[(ss.SERVICE_NAME, token["identifier"])])["kid"] == new_keys.current_id
+
+def test_create_vault_encrypts_legacy_tokens_and_records_migrated(fake_keyring):
+    write_legacy_token(fake_keyring, "legacy_one")
+    fake_keyring.store[(ss.SERVICE_NAME, ss.ACCOUNTS_LIST_KEY)] = json.dumps(["legacy_one"])
+    keys = app_lock.create_vault("pin", "246810")
+    assert keys.migrated is True
+    record = json.loads(fake_keyring.store[(app_lock.SERVICE_NAME, app_lock.VAULT_KEY)])
+    assert record["migrated"] is True
+    assert app_lock.current_key_id() == keys.current_id
+    [token] = ss.get_all_token_data()
+    assert token["account_name"] == "legacy@example.com"
+    assert "legacy_one" not in fake_keyring.entries(ss.SERVICE_NAME)
+
+def test_failed_plaintext_migration_retries_on_unlock(fake_keyring, monkeypatch):
+    write_legacy_token(fake_keyring, "legacy_one")
+    fake_keyring.store[(ss.SERVICE_NAME, ss.ACCOUNTS_LIST_KEY)] = json.dumps(["legacy_one"])
+    real_reencrypt = ss.reencrypt_outdated_tokens
+    monkeypatch.setattr(ss, "reencrypt_outdated_tokens", lambda: (_ for _ in ()).throw(OSError("simulated crash")))
+    keys = app_lock.create_vault("pin", "246810")
+    assert keys.migrated is False
+    assert ss.get_token_secret("legacy_one")["account_name"] == "legacy@example.com"
+    monkeypatch.setattr(ss, "reencrypt_outdated_tokens", real_reencrypt)
+    finished = app_lock.unlock("246810")
+    assert finished.migrated is True
+    [token] = ss.get_all_token_data()
+    assert token["account_name"] == "legacy@example.com"
+    assert "legacy_one" not in fake_keyring.entries(ss.SERVICE_NAME)
+
+def test_migrated_flag_cannot_be_cleared_without_passcode(fake_keyring):
+    app_lock.create_vault("pin", "246810")
+    record = json.loads(fake_keyring.store[(app_lock.SERVICE_NAME, app_lock.VAULT_KEY)])
+    record["migrated"] = False
+    fake_keyring.store[(app_lock.SERVICE_NAME, app_lock.VAULT_KEY)] = json.dumps(record)
+    assert app_lock.unlock("246810") is None
 
 def test_changing_passcode_replaces_data_key(fake_keyring):
     app_lock.create_vault("pin", "246810")
@@ -80,6 +127,7 @@ def test_interrupted_passcode_change_finishes_on_next_unlock(fake_keyring, monke
     assert ss.get_all_token_data()[0]["account_name"] == "alice"
 
     monkeypatch.setattr(ss, "reencrypt_outdated_tokens", real_reencrypt)
+    assert staged.migrated is True
     finished = app_lock.unlock("135790")
     assert len(finished.keys) == 1 and finished.current_id == staged.current_id
     assert len(json.loads(fake_keyring.store[(app_lock.SERVICE_NAME, app_lock.VAULT_KEY)])["keys"]) == 1

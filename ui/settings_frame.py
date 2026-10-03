@@ -3,7 +3,13 @@ from core import app_lock, backup
 from ui.passcode_dialog import UnlockDialog, SetPasscodeDialog
 from ui.password_dialog import PasswordDialog # For backup password
 import tkinter.messagebox as messagebox
-from core.secure_storage import save_auto_lock_setting, get_auto_lock_setting, DEFAULT_AUTO_LOCK_SECONDS, get_all_token_data
+from core.secure_storage import (
+    LockedError,
+    save_auto_lock_setting,
+    get_auto_lock_setting,
+    DEFAULT_AUTO_LOCK_SECONDS,
+    get_all_token_data,
+)
 import json
 import traceback
 
@@ -70,7 +76,13 @@ class SettingsFrame(ctk.CTkFrame):
 
     def _on_auto_lock_change(self, selected_display_value: str):
         timeout_seconds = self.auto_lock_options.get(selected_display_value, DEFAULT_AUTO_LOCK_SECONDS)
-        save_auto_lock_setting(timeout_seconds)
+        try:
+            save_auto_lock_setting(timeout_seconds)
+        except Exception as e:
+            traceback.print_exc()
+            messagebox.showerror("Auto-Lock Error", f"Could not save the auto-lock setting: {e}", parent=self.master_app)
+            self._load_and_set_auto_lock_display() # Show the setting that's still in effect
+            return
         messagebox.showinfo("Auto-Lock Updated", f"Auto-lock timeout set to {selected_display_value}.", parent=self.master_app)
 
         # Notify the main app to update its timer
@@ -160,6 +172,8 @@ class SettingsFrame(ctk.CTkFrame):
 
             self.master_app.load_and_display_tokens()
 
+        except LockedError as e:
+            self.master_app.require_unlock_again(e)
         except backup.BackupPasswordError as e:
             messagebox.showerror("Decryption Failed", str(e), parent=self.master_app)
         except backup.BackupFormatError as e:

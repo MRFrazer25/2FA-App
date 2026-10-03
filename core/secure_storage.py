@@ -28,9 +28,12 @@ NONCE_SIZE_BYTES = 12
 
 class DataKeys(NamedTuple):
     """Keys that encrypt token data, by key ID. New tokens use current_id; older keys only
-    exist briefly while tokens are moved to a new key after a PIN or password change."""
+    exist briefly while tokens are moved to a new key after a PIN or password change.
+    migrated is False only until tokens saved before encryption was added have been
+    encrypted; until then unencrypted token entries are accepted."""
     keys: dict[str, bytes]
     current_id: str
+    migrated: bool = True
 
     @property
     def current_key(self) -> bytes:
@@ -58,6 +61,24 @@ def _require_data_keys() -> DataKeys:
     if _data_keys is None:
         raise LockedError("The app is locked.")
     return _data_keys
+
+def _require_current_data_keys() -> DataKeys:
+    """Like _require_data_keys, but also raises LockedError if the PIN or password was changed
+    since unlocking, because tokens saved with the replaced key could no longer be read."""
+    data_keys = _require_data_keys()
+    from core import app_lock # app_lock imports this module
+    if app_lock.current_key_id() != data_keys.current_id:
+        raise LockedError("Your PIN or password was changed since the app was unlocked. Unlock the app again to continue.")
+    return data_keys
+
+def check_token_fields(account_name, issuer_name, secret_key, recovery_codes=None):
+    """Raises ValueError unless the names and secret key are non-empty text and the
+    recovery codes are text or None."""
+    if not account_name or not secret_key or not issuer_name:
+        raise ValueError("Account name, issuer name, and secret key cannot be empty.")
+    if not all(isinstance(value, str) for value in (account_name, issuer_name, secret_key)) or \
+       not isinstance(recovery_codes, str | None):
+        raise ValueError("Account name, issuer name, secret key, and recovery codes must be text.")
 
 def normalize_secret_key(secret_key: str) -> str:
     """Returns the secret as unpadded uppercase Base32.
@@ -156,11 +177,14 @@ def _is_encrypted(stored: dict) -> bool:
     return isinstance(stored, dict) and "ct" in stored
 
 def _decrypt_token(identifier: str, stored: dict) -> dict:
-    """Returns the token data from a stored entry, decrypting it if needed.
-    Entries saved before encryption was added are returned as-is."""
+    """Returns the token data from a stored entry, decrypting it if needed. Entries saved before
+    encryption was added are returned as-is until they've been encrypted, and rejected after that."""
+    data_keys = _require_data_keys()
     if not _is_encrypted(stored):
+        if data_keys.migrated:
+            raise InvalidTag() # Unauthenticated, so it could have been planted by anything able to write to the keyring
         return stored
-    key = _require_data_keys().keys.get(stored.get("kid"))
+    key = data_keys.keys.get(stored.get("kid"))
     if key is None:
         raise InvalidTag() # Encrypted with a key that isn't unlocked, so it can't be read
     plaintext = AESGCM(key).decrypt(base64.b64decode(stored["nonce"]),
@@ -189,13 +213,12 @@ def save_token_secret(account_name: str, issuer_name: str, secret_key: str, iden
 
     Raises:
         ValueError: If a field is empty or invalid.
-        LockedError: If the app is locked.
+        LockedError: If the app is locked, or the PIN or password was changed since it was unlocked.
     """
-    if not account_name or not secret_key or not issuer_name:
-        raise ValueError("Account name, issuer name, and secret key cannot be empty.")
+    check_token_fields(account_name, issuer_name, secret_key, recovery_codes)
     secret_key = normalize_secret_key(secret_key)
     otp.validate_settings(digits, period, algorithm)
-    _require_data_keys()
+    _require_current_data_keys()
 
     data = {
         "account_name": account_name,
@@ -236,7 +259,7 @@ def save_token_secret(account_name: str, issuer_name: str, secret_key: str, iden
 
 def get_token_secret(identifier: str) -> dict | None:
     """Retrieves and decrypts the data for a given token identifier.
-    Returns None if the token doesn't exist or can't be read or decrypted.
+    Returns None if the token doesn't exist, can't be read or decrypted, or has invalid fields.
 
     Raises:
         LockedError: If the app is locked.
@@ -247,6 +270,7 @@ def get_token_secret(identifier: str) -> dict | None:
         if not stored:
             return None
         data = _decrypt_token(identifier, stored)
+        check_token_fields(data.get("account_name"), data.get("issuer_name"), data.get("secret_key"), data.get("recovery_codes"))
         return {
             "identifier": identifier,
             "account_name": data.get("account_name"),
@@ -318,13 +342,8 @@ def get_all_token_identifiers() -> list[str]:
     return _read_value(ACCOUNTS_LIST_KEY) or []
 
 def save_auto_lock_setting(timeout_seconds: int):
-    """Saves the auto-lock timeout in seconds."""
-    try:
-        keyring.set_password(SERVICE_NAME, AUTO_LOCK_SETTING_KEY, str(timeout_seconds))
-    except keyring.errors.NoKeyringError:
-        print("Keyring backend not found. Cannot save auto-lock setting.")
-    except Exception as e:
-        print(f"Error saving auto-lock setting: {e}")
+    """Saves the auto-lock timeout in seconds. Keyring errors are raised."""
+    keyring.set_password(SERVICE_NAME, AUTO_LOCK_SETTING_KEY, str(timeout_seconds))
 
 def get_auto_lock_setting() -> int:
     """Retrieves the auto-lock timeout in seconds. Returns default if not set or error."""
@@ -347,8 +366,8 @@ def get_all_token_data() -> list[dict]:
     all_data = []
     for identifier in get_all_token_identifiers():
         token_info = get_token_secret(identifier)
-        if token_info and token_info.get("account_name") and token_info.get("secret_key") and token_info.get("issuer_name"):
+        if token_info:
             all_data.append(token_info)
         else:
-            print("[secure_storage] Warning: Skipping a token during list retrieval due to missing critical data.")
+            print("[secure_storage] Warning: Skipping a token that could not be read during list retrieval.")
     return all_data

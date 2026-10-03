@@ -249,9 +249,28 @@ def test_migration_error_does_not_block_unlock(app, monkeypatch):
     def broken_migration():
         raise RuntimeError("simulated migration failure")
     monkeypatch.setattr(ss, "reencrypt_outdated_tokens", broken_migration)
-    stub_dialog(monkeypatch, UnlockDialog, stub_unlock_with("correct horse"))
+    app_lock.change_passcode(ss._data_keys, "pin", "135790")
+    stub_dialog(monkeypatch, UnlockDialog, stub_unlock_with("135790"))
     app.lock_application()
     assert app.app_unlocked and len(app.token_cards) == 2
+
+def test_auto_lock_save_error_is_shown_and_dropdown_resets(app, monkeypatch):
+    from ui import settings_frame as settings_mod
+    shown = []
+    monkeypatch.setattr(settings_mod.messagebox, "showerror",
+                        lambda title, message, **kwargs: shown.append((title, message)))
+    monkeypatch.setattr(settings_mod.messagebox, "showinfo",
+                        lambda title, message, **kwargs: shown.append((title, message)))
+    monkeypatch.setattr(settings_mod, "save_auto_lock_setting",
+                        lambda timeout: (_ for _ in ()).throw(OSError("simulated save failure")))
+    app._show_frame_callback("Settings")
+    settings = app.frames[settings_mod.SettingsFrame]
+    settings.auto_lock_dropdown.set("1 Minute")
+    settings._on_auto_lock_change("1 Minute")
+    assert shown and shown[0][0] == "Auto-Lock Error"
+    assert "simulated save failure" in shown[0][1]
+    assert settings.auto_lock_dropdown.get() == "5 Minutes"
+    assert not any(title == "Auto-Lock Updated" for title, _ in shown)
 
 def test_password_dialog_enter_is_bound_once(no_message_boxes):
     """Enter is handled by the dialog's own binding; a second binding on the fields would submit twice."""

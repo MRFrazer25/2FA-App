@@ -5,7 +5,7 @@ from core import secure_storage
 from ui.add_token_dialog import AddTokenDialog
 import tkinter.messagebox as messagebox
 from ui.passcode_dialog import UnlockDialog, SetPasscodeDialog
-from core import app_lock
+from core import app_lock, single_instance
 import sys
 import keyring
 import traceback
@@ -117,13 +117,8 @@ class TwoFactorApp(ctk.CTk):
         sys.exit(1)
 
     def _unlock_with_data_keys(self, data_keys: secure_storage.DataKeys):
-        """Makes the tokens readable, and encrypts any saved before encryption was added."""
+        """Makes the tokens readable."""
         secure_storage.set_data_keys(data_keys)
-        try:
-            secure_storage.reencrypt_outdated_tokens()
-        except Exception:
-            # Unencrypted tokens can still be read; this is retried on the next unlock
-            traceback.print_exc()
         self.app_unlocked = True
 
     def _prompt_for_pin_and_unlock(self, is_startup_check: bool) -> bool:
@@ -243,6 +238,8 @@ class TwoFactorApp(ctk.CTk):
                     self.load_and_display_tokens() # Refresh the list
                 except ValueError as ve: 
                     messagebox.showerror("Update Error", f"Could not update token: {ve}", parent=self)
+                except secure_storage.LockedError as le:
+                    self.require_unlock_again(le)
                 except Exception as e:
                     traceback.print_exc()
                     messagebox.showerror("Update Error", f"An unexpected error occurred while updating the token: {e}", parent=self)
@@ -261,6 +258,8 @@ class TwoFactorApp(ctk.CTk):
                 self.load_and_display_tokens() # Refresh the list to show the new token
             except ValueError as ve: # Catch specific errors from save_token_secret if any (e.g., duplicate)
                 messagebox.showerror("Save Error", f"Could not save token: {ve}", parent=self)
+            except secure_storage.LockedError as le:
+                self.require_unlock_again(le)
             except Exception as e:
                 traceback.print_exc()
                 messagebox.showerror("Save Error", f"An unexpected error occurred while saving the token: {e}", parent=self)
@@ -377,6 +376,12 @@ class TwoFactorApp(ctk.CTk):
             self.show_home_frame()
             self.reset_inactivity_timer() # Restart inactivity timer
 
+    def require_unlock_again(self, error: secure_storage.LockedError):
+        """Shows why a change couldn't be saved (e.g. the PIN or password was changed since
+        unlocking), then locks the app so unlocking again loads the current key."""
+        messagebox.showerror("Unlock Required", str(error), parent=self)
+        self.lock_application()
+
     def _close_open_dialogs(self):
         """Destroys any open dialog windows so their contents (e.g. secret keys or
         recovery codes) aren't left on screen while the app is locked."""
@@ -397,6 +402,14 @@ class TwoFactorApp(ctk.CTk):
 if __name__ == "__main__":
     app = None # Initialize app to None
     try:
+        # Keep the descriptor so the lock isn't released if this name is the last reference
+        instance_lock = single_instance.acquire()
+        if instance_lock is None:
+            root = tk.Tk()
+            root.withdraw()
+            messagebox.showerror("Already Running", "2FA App is already open. Only one copy can run at a time.", parent=root)
+            root.destroy()
+            sys.exit(1)
         app = TwoFactorApp()
         # Cancelling or failing to unlock exits during startup, so this is only False if that changes
         if app.app_unlocked:

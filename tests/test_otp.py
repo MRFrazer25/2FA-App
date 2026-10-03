@@ -27,6 +27,12 @@ def test_period_changes_code_window():
 def test_format_code(code, expected):
     assert otp.format_code(code) == expected
 
+def test_validate_settings_rejects_wrong_types():
+    with pytest.raises(ValueError, match="Code length"):
+        otp.validate_settings("6", 30, "SHA1")
+    with pytest.raises(ValueError, match="Algorithm"):
+        otp.validate_settings(6, 30, ["SHA1"])
+
 def test_parse_full_uri():
     token = otp.parse_otpauth_uri(
         "otpauth://totp/GitHub:alice%40example.com?secret=JBSWY3DPEHPK3PXP&issuer=GitHub&digits=8&period=60&algorithm=sha256")
