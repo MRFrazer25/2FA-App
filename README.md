@@ -37,6 +37,15 @@ Malware that records your keystrokes, or that reads the app's memory while it's 
 
 Your tokens can't be decrypted without it, and there is no recovery option. Keep an up-to-date encrypted backup (Settings > Backup Tokens) with a backup password you won't forget.
 
+## Download (Windows)
+
+No Python install needed: the download includes everything the app needs to run. Download `2FA-App-<version>-windows.zip` from the [Releases page](https://github.com/MRFrazer25/2FA-App/releases), extract it, and run `2FA App.exe` inside the extracted `2FA App` folder. Keep the whole folder together; the exe needs the files next to it.
+
+*   **Windows will probably warn you.** The exe isn't code-signed, so SmartScreen shows "Windows protected your PC". Click **More info**, then **Run anyway**. Some antivirus programs also flag PyInstaller apps by mistake.
+*   **Built by GitHub, not on a personal PC.** Each release is built from the tagged source code by the [GitHub Actions workflow](.github/workflows/build.yml), which runs the tests first. The build log for every release is public on the Actions tab.
+*   **Checking your download (optional):** each release includes a `.sha256` file. Compare it with the output of `Get-FileHash 2FA-App-<version>-windows.zip` in PowerShell. To confirm the zip was built by this repository's workflow, run `gh attestation verify 2FA-App-<version>-windows.zip -R MRFrazer25/2FA-App` with the [GitHub CLI](https://cli.github.com/).
+*   Your tokens are stored in Windows Credential Manager, not in the app folder, so you can delete or replace the folder when updating without losing them.
+
 ## Requirements
 
 *   Python 3.10+
@@ -84,6 +93,22 @@ pip install -r requirements-dev.txt
 python -m pytest
 ```
 The tests use an in-memory keyring, so they never touch your real credential store.
+
+## Building the Windows exe
+
+Releases are built by GitHub Actions. Pushing a version tag runs the tests, builds the exe with PyInstaller, and publishes a release with the zip, its SHA-256 hash, and a build attestation:
+
+```bash
+git tag v1.0.0
+git push origin v1.0.0
+```
+Running the workflow by hand from the Actions tab builds the same zip as a downloadable artifact without making a release.
+
+To build locally instead, install `pyinstaller` and run:
+```bash
+pyinstaller --noconfirm --clean --windowed --name "2FA App" --collect-data customtkinter --add-data "assets:assets" main.py
+```
+The app is created in `dist/2FA App/`.
 
 ## Troubleshooting
 
