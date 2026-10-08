@@ -2,6 +2,8 @@
 
 A secure and modern two-factor authentication (2FA) desktop application built with Python and CustomTkinter. Your TOTP secrets are encrypted with your PIN or password and stored in your system's keyring.
 
+![2FA App main window in dark mode, showing two TOTP tokens with live codes and countdown bars](docs/screenshot.png)
+
 ## Features
 
 *   **Modern UI:** Built with CustomTkinter, supporting Light, Dark, and System modes.
