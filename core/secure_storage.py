@@ -15,6 +15,7 @@ SERVICE_NAME = "2FA App"
 ACCOUNTS_LIST_KEY = "__accounts_list__"
 AUTO_LOCK_SETTING_KEY = "__auto_lock_timeout_seconds__"
 DEFAULT_AUTO_LOCK_SECONDS = 300 # 5 minutes
+MAX_AUTO_LOCK_SECONDS = 24 * 60 * 60 # Longer than any option in Settings; guards against a corrupted value
 
 # Windows Credential Manager rejects values longer than 1280 characters, so larger values
 # are split across several entries. json.dumps escapes non-ASCII text, so every character
@@ -346,11 +347,15 @@ def save_auto_lock_setting(timeout_seconds: int):
     keyring.set_password(SERVICE_NAME, AUTO_LOCK_SETTING_KEY, str(timeout_seconds))
 
 def get_auto_lock_setting() -> int:
-    """Retrieves the auto-lock timeout in seconds. Returns default if not set or error."""
+    """Retrieves the auto-lock timeout in seconds (0 means disabled). Returns the default if it
+    isn't set, can't be read, or is out of range."""
     try:
         timeout_str = keyring.get_password(SERVICE_NAME, AUTO_LOCK_SETTING_KEY)
         if timeout_str is not None:
-            return int(timeout_str)
+            timeout = int(timeout_str)
+            if 0 <= timeout <= MAX_AUTO_LOCK_SECONDS:
+                return timeout
+            print("Auto-lock setting is out of range. Using default.")
     except keyring.errors.NoKeyringError:
         pass
     except Exception as e:

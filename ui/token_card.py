@@ -13,11 +13,14 @@ _copied_code = None
 _clipboard_clear_timer = None
 _clipboard_lock = threading.Lock()
 
+# The clipboard is read and written while holding _clipboard_lock, so the clear timer can't wipe
+# a code copied while it runs
+
 def _copy_code(code: str):
     """Copies a code to the clipboard and schedules it to be cleared."""
     global _copied_code, _clipboard_clear_timer
-    pyperclip.copy(code)
     with _clipboard_lock:
+        pyperclip.copy(code)
         if _clipboard_clear_timer:
             _clipboard_clear_timer.cancel()
         _copied_code = code
@@ -33,13 +36,13 @@ def clear_copied_code():
             _clipboard_clear_timer.cancel()
             _clipboard_clear_timer = None
         code, _copied_code = _copied_code, None
-    if code is None:
-        return
-    try:
-        if pyperclip.paste() == code:
-            pyperclip.copy("")
-    except pyperclip.PyperclipException:
-        pass
+        if code is None:
+            return
+        try:
+            if pyperclip.paste() == code:
+                pyperclip.copy("")
+        except pyperclip.PyperclipException:
+            pass
 
 class TokenCard(ctk.CTkFrame):
     """A card widget to display a single 2FA token, its details, and actions."""
@@ -132,6 +135,14 @@ class TokenCard(ctk.CTkFrame):
         super().destroy()
 
     def copy_to_clipboard(self):
+        # Generate the code now: the display only refreshes once a second, so right after a
+        # period ends it can still show the previous, expired code
+        try:
+            self._current_token_val = self.totp.now()
+            self.token_label.configure(text=otp.format_code(self._current_token_val))
+        except Exception as e:
+            print(f"Error in TokenCard copy_to_clipboard: {e}")
+            return
         if self._current_token_val:
             try:
                 _copy_code(self._current_token_val)

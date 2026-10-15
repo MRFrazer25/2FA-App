@@ -1,4 +1,5 @@
 import customtkinter as ctk
+from ui.window_utils import center_window
 import traceback
 from core import app_lock
 
@@ -56,26 +57,7 @@ class _ModalDialog(ctk.CTkToplevel):
             self.destroy()
 
     def _center_window(self):
-        self.update_idletasks() # Ensure window dimensions are calculated
-        if self.master and self.master.winfo_exists() and self.master.winfo_viewable():
-            master_x = self.master.winfo_x()
-            master_y = self.master.winfo_y()
-            master_width = self.master.winfo_width()
-            master_height = self.master.winfo_height()
-            dialog_width = self.winfo_width()
-            dialog_height = self.winfo_height()
-
-            # Check for valid dialog dimensions, retry if not ready
-            if dialog_width <= 1 or dialog_height <= 1:
-                self.after(20, self._center_window)
-                return
-
-            x = max(0, master_x + (master_width - dialog_width) // 2)
-            y = max(0, master_y + (master_height - dialog_height) // 2)
-            self.geometry(f"+{x}+{y}")
-        else:
-            # Main window is hidden (startup or locked), so center on screen
-            self.tk.eval(f'tk::PlaceWindow {self} center')
+        center_window(self)
 
     def _cancel_event(self, event=None):
         self._result = None

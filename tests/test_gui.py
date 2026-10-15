@@ -351,3 +351,90 @@ def test_cancelling_after_verify_still_reloads_moved_tokens(app, monkeypatch):
     app.frames[SettingsFrame]._handle_change_pin()
 
     assert set(app.token_cards) == {token["identifier"] for token in ss.get_all_token_data()}
+
+def test_recovery_codes_dialog_centers_over_the_app_window(no_message_boxes):
+    """Its master is a frame inside the window, whose own coordinates are relative to its parent."""
+    root = tk.Tk()
+    root.geometry("800x600+300+200")
+    frame = tk.Frame(root)
+    frame.pack(padx=150, pady=150)
+    tk.Label(frame, text="nested").pack()
+    root.update()
+    try:
+        dialog = RecoveryCodesDialog(frame, title="Codes", recovery_codes="code-1")
+        dialog.update()
+        dialog._center_window()
+        dialog.update()
+        expected_x = root.winfo_rootx() + (root.winfo_width() - dialog.winfo_width()) // 2
+        expected_y = root.winfo_rooty() + (root.winfo_height() - dialog.winfo_height()) // 2
+        # Window managers add borders and title bars, so allow some slack
+        assert abs(dialog.winfo_rootx() - expected_x) < 40
+        assert abs(dialog.winfo_rooty() - expected_y) < 60
+        dialog.destroy()
+    finally:
+        root.destroy()
+
+def test_copy_uses_the_current_code_and_clipboard_clears(app, monkeypatch):
+    from ui import token_card
+    clipboard = {"text": ""}
+    monkeypatch.setattr(token_card.pyperclip, "copy", lambda text: clipboard.update(text=text))
+    monkeypatch.setattr(token_card.pyperclip, "paste", lambda: clipboard["text"])
+    card = next(iter(app.token_cards.values()))
+    monkeypatch.setattr(card.totp, "now", lambda: "654321") # A new period began since the last refresh
+
+    card.copy_to_clipboard()
+    assert clipboard["text"] == "654321"
+
+    token_card.clear_copied_code()
+    assert clipboard["text"] == ""
+
+    # A code copied by another app isn't cleared
+    card.copy_to_clipboard()
+    clipboard["text"] = "something else"
+    token_card.clear_copied_code()
+    assert clipboard["text"] == "something else"
+
+def test_activity_does_not_create_a_timer_per_event_and_inactivity_locks(app, monkeypatch):
+    now = [1000.0]
+    monkeypatch.setattr(main.time, "monotonic", lambda: now[0])
+    app.auto_lock_after_seconds = 60
+    app.reset_inactivity_timer()
+    timer = app.inactivity_timer_id
+    for _ in range(100):
+        app.reset_inactivity_timer() # e.g. mouse movement
+    assert app.inactivity_timer_id == timer
+
+    prompts = []
+    stub_dialog(monkeypatch, UnlockDialog, lambda dialog: (prompts.append(1), dialog._verify("correct horse"))[1])
+    now[0] += 30
+    app._check_inactivity()
+    assert prompts == [] and app.inactivity_timer_id is not None # Not idle long enough yet
+
+    now[0] += 31
+    app._check_inactivity()
+    assert prompts == [1] and app.app_unlocked
+
+def test_unlock_required_message_does_not_lock_twice(app, monkeypatch):
+    prompts = []
+    stub_dialog(monkeypatch, UnlockDialog, lambda dialog: (prompts.append(1), dialog._verify("correct horse"))[1])
+    # Auto-lock fires (and the user unlocks) while the message is open
+    monkeypatch.setattr(main.messagebox, "showerror", lambda *args, **kwargs: app.lock_application())
+    app.require_unlock_again(ss.LockedError("PIN changed"))
+    assert prompts == [1]
+
+    # Without that, dismissing the message locks the app as before
+    monkeypatch.setattr(main.messagebox, "showerror", lambda *args, **kwargs: None)
+    app.require_unlock_again(ss.LockedError("PIN changed"))
+    assert prompts == [1, 1]
+
+def test_unreadable_qr_image_shows_an_error(app, monkeypatch):
+    from PIL import Image
+    import ui.add_token_dialog as add_token_module
+    dialog = AddTokenDialog(master=app)
+    monkeypatch.setattr(add_token_module.ctk.filedialog, "askopenfilename", lambda **kwargs: "huge.png")
+    def too_big(path):
+        raise Image.DecompressionBombError("Image size exceeds limit")
+    monkeypatch.setattr(add_token_module.Image, "open", too_big)
+    dialog._open_image()
+    assert "Could not read the image" in dialog.error_label_text.get()
+    dialog.destroy()

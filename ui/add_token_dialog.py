@@ -1,4 +1,5 @@
 import customtkinter as ctk
+from ui.window_utils import center_window
 from PIL import Image, ImageGrab
 from core import otp
 from core.secure_storage import normalize_secret_key
@@ -107,21 +108,7 @@ class AddTokenDialog(ctk.CTkToplevel):
         self.protocol("WM_DELETE_WINDOW", self._cancel_event)
 
     def _center_window(self):
-        self.update_idletasks()
-        if self.master and self.master.winfo_exists():
-            master_x = self.master.winfo_x()
-            master_y = self.master.winfo_y()
-            master_width = self.master.winfo_width()
-            master_height = self.master.winfo_height()
-            dialog_width = self.winfo_width()
-            dialog_height = self.winfo_height()
-            x = master_x + (master_width - dialog_width) // 2
-            y = master_y + (master_height - dialog_height) // 2
-            x = max(0, x)
-            y = max(0, y)
-            self.geometry(f"+{x}+{y}")
-        else:
-            self.tk.eval(f'tk::PlaceWindow {self} center')
+        center_window(self)
 
     def _set_code_options(self, digits: int, period: int, algorithm: str):
         self.digits_menu.set(f"{digits} digits")
@@ -205,8 +192,10 @@ class AddTokenDialog(ctk.CTkToplevel):
         try:
             with Image.open(path) as image:
                 self._fill_from_image(image)
-        except OSError as e:
-            self.error_label_text.set(f"Could not open the image: {e}")
+        except Exception as e:
+            # Not just OSError: Pillow raises DecompressionBombError for huge images, and
+            # decoding can fail in OpenCV too
+            self.error_label_text.set(f"Could not read the image: {e}")
 
     def _ok_event(self, event=None):
         issuer = self.issuer_entry.get().strip()

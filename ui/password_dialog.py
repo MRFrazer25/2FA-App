@@ -1,4 +1,5 @@
 import customtkinter as ctk
+from ui.window_utils import center_window
 
 class PasswordDialog(ctk.CTkToplevel):
     """Modal dialog for entering a backup password.
@@ -55,28 +56,7 @@ class PasswordDialog(ctk.CTkToplevel):
         self.after(150, lambda: self.attributes("-topmost", False))
 
     def _center_window(self):
-        self.update_idletasks()
-        if self.master and self.master.winfo_exists():
-            master_x = self.master.winfo_x()
-            master_y = self.master.winfo_y()
-            master_width = self.master.winfo_width()
-            master_height = self.master.winfo_height()
-            
-            self.update_idletasks()
-            dialog_width = self.winfo_width()
-            dialog_height = self.winfo_height()
-
-            if dialog_width <= 1 or dialog_height <= 1:
-                self.after(20, self._center_window)
-                return
-
-            x = master_x + (master_width - dialog_width) // 2
-            y = master_y + (master_height - dialog_height) // 2
-            x = max(0,x)
-            y = max(0,y)
-            self.geometry(f"+{x}+{y}")
-        else:
-            self.tk.eval(f'tk::PlaceWindow {self} center')
+        center_window(self)
 
     def _ok_event(self, event=None):
         pass1 = self.password_entry.get()

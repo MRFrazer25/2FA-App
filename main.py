@@ -8,10 +8,12 @@ from ui.passcode_dialog import UnlockDialog, SetPasscodeDialog
 from core import app_lock, single_instance
 import sys
 import keyring
+import time
 import traceback
 from ui.sidebar import SidebarFrame
 
 NO_TOKENS_TEXT = "No 2FA tokens found. Click 'Add Token' in the sidebar to add one."
+INACTIVITY_CHECK_MS = 1000 # How often auto-lock checks for inactivity
 
 class TwoFactorApp(ctk.CTk):
     """
@@ -25,6 +27,8 @@ class TwoFactorApp(ctk.CTk):
 
         self.app_unlocked = False
         self.inactivity_timer_id = None
+        self._last_activity = time.monotonic()
+        self._lock_count = 0 # Increases each time the app locks
         self.auto_lock_after_seconds = secure_storage.get_auto_lock_setting()
 
         # Configure main window grid
@@ -341,12 +345,21 @@ class TwoFactorApp(ctk.CTk):
             self.no_tokens_label.grid(row=1, column=0, sticky="nsew", padx=20, pady=20)
 
     def reset_inactivity_timer(self, event=None): # event arg needed for bindings
-        if self.inactivity_timer_id:
-            self.after_cancel(self.inactivity_timer_id)
-            self.inactivity_timer_id = None
-        
-        if self.app_unlocked and self.auto_lock_after_seconds > 0:
-            self.inactivity_timer_id = self.after(self.auto_lock_after_seconds * 1000, self.lock_application)
+        """Records activity. Called on every mouse move and key press, so it only stores the time;
+        one timer checks it periodically instead of a timer being rebuilt on every event."""
+        self._last_activity = time.monotonic()
+        if self.inactivity_timer_id is None and self.app_unlocked and self.auto_lock_after_seconds > 0:
+            self.inactivity_timer_id = self.after(INACTIVITY_CHECK_MS, self._check_inactivity)
+
+    def _check_inactivity(self):
+        self.inactivity_timer_id = None
+        if not self.app_unlocked or self.auto_lock_after_seconds <= 0:
+            return
+        # time.monotonic() keeps counting while the computer sleeps, so the app locks after waking
+        if time.monotonic() - self._last_activity >= self.auto_lock_after_seconds:
+            self.lock_application()
+        else:
+            self.inactivity_timer_id = self.after(INACTIVITY_CHECK_MS, self._check_inactivity)
 
     def lock_application(self):
         """Locks the application, withdraws the window, and prompts for the PIN or password to unlock."""
@@ -355,6 +368,7 @@ class TwoFactorApp(ctk.CTk):
             self.inactivity_timer_id = None
 
         self.app_unlocked = False
+        self._lock_count += 1
         self._close_open_dialogs()
         clear_copied_code()
         self.withdraw()
@@ -379,8 +393,10 @@ class TwoFactorApp(ctk.CTk):
     def require_unlock_again(self, error: secure_storage.LockedError):
         """Shows why a change couldn't be saved (e.g. the PIN or password was changed since
         unlocking), then locks the app so unlocking again loads the current key."""
+        lock_count = self._lock_count
         messagebox.showerror("Unlock Required", str(error), parent=self)
-        self.lock_application()
+        if self._lock_count == lock_count: # Not already locked (e.g. by auto-lock) while the message was open
+            self.lock_application()
 
     def _close_open_dialogs(self):
         """Destroys any open dialog windows so their contents (e.g. secret keys or

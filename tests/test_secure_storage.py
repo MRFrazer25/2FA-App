@@ -170,3 +170,9 @@ def test_save_auto_lock_setting_raises(fake_keyring, monkeypatch):
     monkeypatch.setattr(fake_keyring, "set_password", boom)
     with pytest.raises(OSError, match="simulated save failure"):
         ss.save_auto_lock_setting(60)
+
+@pytest.mark.parametrize("stored, expected", [("0", 0), ("60", 60), ("3600", 3600), ("-5", ss.DEFAULT_AUTO_LOCK_SECONDS),
+                                              (str(10 ** 12), ss.DEFAULT_AUTO_LOCK_SECONDS), ("abc", ss.DEFAULT_AUTO_LOCK_SECONDS)])
+def test_auto_lock_setting_out_of_range_uses_default(fake_keyring, stored, expected):
+    fake_keyring.store[(ss.SERVICE_NAME, ss.AUTO_LOCK_SETTING_KEY)] = stored
+    assert ss.get_auto_lock_setting() == expected
