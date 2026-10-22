@@ -1,7 +1,8 @@
-customtkinter
-pyotp
-keyring
-Pillow
-cryptography
-pyperclip
-opencv-python
+# Exact versions. Dependabot proposes updates weekly, once a release is 7 days old (.github/dependabot.yml).
+customtkinter==6.0.0
+pyotp==2.10.0
+keyring==25.7.0
+Pillow==13.0.0
+cryptography==50.0.2
+pyperclip==1.11.0
+opencv-python==5.0.0.93
