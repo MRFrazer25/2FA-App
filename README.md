@@ -1,5 +1,9 @@
 # 2FA App
 
+[![Tests](https://github.com/MRFrazer25/2FA-App/actions/workflows/tests.yml/badge.svg)](https://github.com/MRFrazer25/2FA-App/actions/workflows/tests.yml)
+[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](https://github.com/MRFrazer25/2FA-App/blob/main/LICENSE)
+[![Latest release](https://img.shields.io/github/v/release/MRFrazer25/2FA-App)](https://github.com/MRFrazer25/2FA-App/releases/latest)
+
 A secure and modern two-factor authentication (2FA) desktop application built with Python and CustomTkinter. Your TOTP secrets are encrypted with your PIN or password and stored in your system's keyring.
 
 ![2FA App main window in dark mode, showing two TOTP tokens with live codes and countdown bars](docs/screenshot.png)
